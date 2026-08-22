@@ -80,6 +80,11 @@ write_job "chessalive-dev" "Jenkinsfile.dev" \
 write_job "chessalive-release" "Jenkinsfile.release" "" \
   "ChessAlive RELEASE lane - full guard, then deploy chessd + web bundle to the OCI box with automatic rollback on health-gate failure. Manual trigger with an in-pipeline approval step."
 
+# Config/secrets. Manual only, and the pipeline itself gates every mutating action behind an
+# approval step plus a post-change health check.
+write_job "chessalive-config" "Jenkinsfile.config" "" \
+  "ChessAlive CONFIG + SECRETS - one-click LIST / SET / UNSET / APPLY / VERSIONS / ROLLBACK over the production dotenv held in OCI Vault. Every write creates a new Vault version and health-checks the host afterwards."
+
 echo "  reloading Jenkins..."
 if command -v brew >/dev/null 2>&1 && brew services list 2>/dev/null | grep -q '^jenkins-lts'; then
   brew services restart jenkins-lts >/dev/null
