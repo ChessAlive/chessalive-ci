@@ -14,7 +14,7 @@ set -euo pipefail
 
 CHESSALIVE_DIR="${1:-${CHESSALIVE_DIR:-}}"
 JENKINS_HOME="${JENKINS_HOME:-${HOME}/.jenkins}"
-BRANCH="${BRANCH:-feat/go-server}"
+BRANCH="${BRANCH:-main}"
 
 die() { printf '\033[31m✖ %s\033[0m\n' "$*" >&2; exit 1; }
 
@@ -25,7 +25,8 @@ CHESSALIVE_DIR="$(cd "${CHESSALIVE_DIR}" && pwd)"
 [[ -d "${JENKINS_HOME}/plugins/workflow-job" ]] \
   || die "Pipeline plugin missing — finish the Jenkins setup wizard ('Install suggested plugins') first."
 
-# Your own checkout is the SCM source. That is deliberate, not a shortcut: feat/go-server exists
+# Your own checkout is the SCM source. That is deliberate, not a shortcut: the Go/OCI stack lived
+# on feat/go-server until it merged to main on 2026-08-24, and that branch existed
 # only locally on the maintainer's machine, and building from your working repo is what makes the
 # dev lane useful before anything is pushed. Point REPO_URL at GitHub once the branch is pushed.
 REPO_URL="${REPO_URL:-file://${CHESSALIVE_DIR}}"
@@ -66,6 +67,40 @@ write_job() {
 XML
   printf '  \033[32m✓\033[0m %s  (%s @ %s)\n' "${name}" "${script_path}" "${BRANCH}"
 }
+
+# ── toolchain shim ───────────────────────────────────────────────────────────────────────────────
+# Jenkins runs from launchd with no login shell, so a version-managed toolchain is invisible to it:
+# `go` resolves (Homebrew is on the default PATH) but nvm-managed `node`/`npm` do not, and every
+# build dies at `npm ci` with exit 127. Hardcoding an nvm version into the Jenkinsfile would just
+# move the breakage to the next Node upgrade.
+#
+# Resolve the tools HERE, once, into a stable directory the pipelines can reference by a fixed path.
+# Machine specifics stay in the installer; the Jenkinsfiles stay portable.
+link_toolchain() {
+  local bin="${JENKINS_HOME}/toolchain/bin"
+  mkdir -p "${bin}"
+  local resolved=0
+  for tool in node npm npx go git; do
+    # Prefer whatever the developer's own interactive shell resolves, since that is the toolchain
+    # they actually build with; fall back to a login shell so nvm/asdf shims get a chance to load.
+    local path
+    path="$(command -v "${tool}" 2>/dev/null || true)"
+    if [[ -z "${path}" ]]; then
+      path="$(bash -lc "command -v ${tool}" 2>/dev/null || true)"
+    fi
+    if [[ -n "${path}" ]]; then
+      ln -sf "${path}" "${bin}/${tool}"
+      printf '  \033[32m✓\033[0m %-5s %s\n' "${tool}" "${path}"
+      resolved=$((resolved + 1))
+    else
+      printf '  \033[33m!\033[0m %-5s not found — builds needing it will fail\n' "${tool}"
+    fi
+  done
+  [[ "${resolved}" -gt 0 ]] || die "resolved no build tools at all; Jenkins cannot build anything"
+}
+
+echo "  toolchain shim: ${JENKINS_HOME}/toolchain/bin"
+link_toolchain
 
 echo "  repo: ${REPO_URL}"
 

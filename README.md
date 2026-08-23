@@ -65,5 +65,6 @@ It never transports a credential of its own.
 - **Builds only run while your machine is awake.** This is a workstation CI, not a service. There
   are no nightly or unattended runs. If you later want always-on CI, put it on a dedicated box —
   not on the production host, which is exactly what this layout avoids.
-- The dev job builds `feat/go-server` by default (that is where the Go server lives). Override
-  with `BRANCH=main ./lib/install-jobs.sh …`.
+- The dev job builds `main` by default. The Go/OCI stack merged to main on 2026-08-24; the
+  pre-merge main is preserved as `main-backup`. Override with
+  `BRANCH=<name> ./lib/install-jobs.sh …`.
