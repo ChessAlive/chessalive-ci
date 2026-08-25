@@ -2,23 +2,28 @@
 
 ## Install
 
-One command, from anywhere:
+One command. Requires only `git`, Homebrew, and SSH access to the ChessAlive org — the same
+access you already need to clone the main repo. No `gh` CLI, no arguments.
 
 ```bash
-gh repo clone ChessAlive/chessalive-ci -- --depth 1 /tmp/chessalive-ci && /tmp/chessalive-ci/install.sh ~/Documents/ChessAlive
+rm -rf /tmp/chessalive-ci && git clone --depth 1 git@github.com:ChessAlive/chessalive-ci.git /tmp/chessalive-ci && /tmp/chessalive-ci/install.sh
 ```
 
-Pass the path to your ChessAlive checkout as the argument (the example assumes
-`~/Documents/ChessAlive`).
+It finds your ChessAlive checkout automatically (`~/Documents/ChessAlive`, `~/ChessAlive`,
+`~/src/ChessAlive`, or a sibling of this repo). If yours is somewhere else, pass it:
 
-It installs Jenkins via Homebrew, bootstraps it non-interactively (no setup wizard), installs the
-pipeline plugins, and wires in the dev, release and config jobs. Re-running is safe — it refreshes
-the job definitions.
+```bash
+/tmp/chessalive-ci/install.sh /path/to/ChessAlive
+```
 
-Then open <http://localhost:8080> and sign in as **admin / admin**.
+The installer puts Jenkins in place via Homebrew, bootstraps it non-interactively (no setup
+wizard), installs the pipeline plugins, wires in the dev/release/config jobs, and starts the
+service. Re-running is safe — it refreshes the job definitions.
 
-Override the password with `CHESSALIVE_JENKINS_PASSWORD=... ./install.sh ...`. It is only ever
-written to your own `~/.jenkins`, never committed.
+Then open <http://localhost:8080> and sign in as **admin** / **admin**.
+
+Override the password with `CHESSALIVE_JENKINS_PASSWORD=... /tmp/chessalive-ci/install.sh`. It is
+written only to your own `~/.jenkins`, never committed.
 
 Jenkins binds to `127.0.0.1` only — it is not reachable from your network. It can deploy to
 production, so treat local access to it as production access.
