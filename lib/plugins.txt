@@ -1,0 +1,7 @@
+# Plugins the ChessAlive pipelines actually use. Kept explicit rather than relying on the setup
+# wizard's "suggested" set: that set changes between Jenkins releases, and a missing plugin here
+# fails a build with a Groovy MissingMethodException rather than anything that names the cause.
+workflow-aggregator
+git
+timestamper
+ws-cleanup

@@ -66,6 +66,22 @@ else
   warn "could not confirm the listen address is localhost-only — check before exposing anything"
 fi
 
+# ── 3a. Non-interactive bootstrap ────────────────────────────────────────────────────────────────
+# Written BEFORE the first start so Jenkins never presents the setup wizard: the scripts create the
+# admin account, mark setup complete, and apply the GitSCM local-checkout fix. Doing this by hand is
+# the step that made "install Jenkins" a 20-minute job instead of one command.
+JENKINS_HOME="${JENKINS_HOME:-${HOME}/.jenkins}"
+ADMIN_PASSWORD="${CHESSALIVE_JENKINS_PASSWORD:-admin}"
+mkdir -p "${JENKINS_HOME}/init.groovy.d"
+for src in "${REPO_DIR}"/lib/init.groovy.d/*.groovy; do
+  dest="${JENKINS_HOME}/init.groovy.d/$(basename "${src}")"
+  # The password is substituted at install time, never committed. Default "admin" suits a
+  # localhost-only dev controller; override with CHESSALIVE_JENKINS_PASSWORD.
+  sed "s|__CHESSALIVE_ADMIN_PASSWORD__|${ADMIN_PASSWORD}|g" "${src}" > "${dest}"
+  chmod 600 "${dest}"
+done
+ok "bootstrap scripts installed (admin user, no setup wizard)"
+
 bold "Starting Jenkins"
 brew services start jenkins-lts >/dev/null 2>&1 || brew services restart jenkins-lts >/dev/null
 printf '  waiting for Jenkins to boot'
@@ -84,23 +100,38 @@ WIZARD_DONE=""
 [[ -d "${JENKINS_HOME}/plugins/workflow-job" ]] && WIZARD_DONE=yes
 
 if [[ -z "${WIZARD_DONE}" ]]; then
-  bold "Finish the Jenkins setup wizard (one time, ~2 minutes)"
-  cat <<EOF
-  1. Open  ${JENKINS_URL}
-  2. Unlock with this password:
+  bold "Installing plugins"
+  # The bootstrap skipped the wizard, so nothing has installed the Pipeline/Git plugins yet.
+  # jenkins-plugin-cli resolves dependencies and writes straight into the plugin directory, which
+  # avoids needing an authenticated session before the controller is usable.
+  CLI_JAR="$(brew --prefix)/opt/jenkins-lts/libexec/jenkins.war"
+  if command -v jenkins-plugin-cli >/dev/null 2>&1; then
+    jenkins-plugin-cli --war "${CLI_JAR}" \
+      --plugin-download-directory "${JENKINS_HOME}/plugins" \
+      --plugin-file "${REPO_DIR}/lib/plugins.txt" || die "plugin install failed"
+  else
+    # Fallback: fetch each plugin and let Jenkins resolve dependencies on restart.
+    UC="https://updates.jenkins.io/latest"
+    mkdir -p "${JENKINS_HOME}/plugins"
+    while read -r plugin; do
+      case "${plugin}" in ''|\#*) continue ;; esac
+      curl -fsSL -o "${JENKINS_HOME}/plugins/${plugin}.jpi" "${UC}/${plugin}.hpi" \
+        || die "could not download plugin: ${plugin}"
+      printf '  %s\n' "${plugin}"
+    done < "${REPO_DIR}/lib/plugins.txt"
+  fi
+  ok "plugins installed"
 
-       $( [[ -f "${SECRET_FILE}" ]] && cat "${SECRET_FILE}" || echo "(see ${SECRET_FILE})" )
-
-  3. Choose "Install suggested plugins" (this brings in Pipeline, Git, Timestamper,
-     and Workspace Cleanup — all four are required).
-  4. Create your own admin user. Pick your own password; this installer never sets one.
-
-  Then re-run this script to add the jobs:
-
-       ${REPO_DIR}/install.sh ${CHESSALIVE_DIR}
-
-EOF
-  exit 0
+  bold "Restarting Jenkins to load them"
+  brew services restart jenkins-lts >/dev/null
+  printf '  waiting'
+  for _ in $(seq 1 60); do
+    if curl -sf -o /dev/null "${JENKINS_URL}/login" 2>/dev/null; then break; fi
+    printf '.'; sleep 2
+  done
+  echo
+  curl -sf -o /dev/null "${JENKINS_URL}/login" || die "Jenkins did not come back up after the plugin install."
+  ok "Jenkins is up with the pipeline plugins"
 fi
 
 # ── 5. Jobs ──────────────────────────────────────────────────────────────────────────────────────
