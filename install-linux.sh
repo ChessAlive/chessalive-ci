@@ -23,8 +23,9 @@
 # Env knobs (all optional except the password):
 #   CHESSALIVE_JENKINS_PASSWORD  admin password, or "generate". Reused from the password file on
 #                                re-runs when unset.
-#   CHESSALIVE_JENKINS_HEAP      -Xms/-Xmx for the controller. Default 384m: the VM has 969 MB and
-#                                no swap. Use 2g once it is resized (see infra/gcp/CI-VM.md).
+#   CHESSALIVE_JENKINS_HEAP      -Xms/-Xmx for the controller. Default 384m: the VM has 969 MB
+#                                (plus the swap file below). Use 2g once it is resized (see
+#                                infra/gcp/CI-VM.md).
 #   CHESSALIVE_CI_SWAP_GB        swap file to create when the box has none. Default 2; 0 disables.
 #                                Idle Jenkins + kernel + sshd sit at ~700 MB on this box; without a
 #                                spill the first plugin load can OOM-kill the JVM.
@@ -76,6 +77,14 @@ case "${ARCH}" in
 esac
 ok "${PRETTY_NAME} (${CODENAME}, ${ARCH})"
 
+# rsync -a from the Mac keeps the developer's uid on the copied files, and on this box that uid
+# belongs to a leftover pre-OS-Login account. Root must not execute scripts a non-root account can
+# edit, so an installer that lives under /opt is made root's before anything else runs.
+if [[ "${REPO_DIR}" == /opt/* ]] && find "${REPO_DIR}" -not -user root -print -quit | grep -q .; then
+  chown -R root:root "${REPO_DIR}"
+  ok "installer files now owned by root (${REPO_DIR})"
+fi
+
 MEM_MB=$(( $(awk '/^MemTotal:/ {print $2}' /proc/meminfo) / 1024 ))
 if [[ "${MEM_MB}" -lt 3000 ]]; then
   warn "${MEM_MB} MB RAM: enough to keep Jenkins idle, NOT enough to run a build (npm ci + vitest +"
@@ -101,7 +110,9 @@ elif [[ -n "${ADMIN_PASSWORD}" ]]; then
 else
   die "CHESSALIVE_JENKINS_PASSWORD is required on a shared VM (no default). Use 'generate' for a random one."
 fi
-case "${ADMIN_PASSWORD}" in *'|'*|*'&'*|*'\'*) die "password may not contain | & or \\ (it is substituted with sed)";; esac
+# | & \ break the sed substitution; " $ and ` break the Groovy string literal the password lands in
+# (a bootstrap script that fails to compile leaves the admin account with the OLD password).
+case "${ADMIN_PASSWORD}" in *'|'*|*'&'*|*'\'*|*'"'*|*'$'*|*'`'*) die "password may not contain | & \\ \" \$ or \` (it is substituted into sed and a Groovy string)";; esac
 
 # ── 2. OS packages ───────────────────────────────────────────────────────────────────────────────
 # The pkg.jenkins.io apt source, written BEFORE the first apt-get update so a stale key from an

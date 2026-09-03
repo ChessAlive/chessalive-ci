@@ -108,9 +108,42 @@ if [[ "${REPO_URL}" == file://* ]]; then
   CONTENT_DISABLED_NOTE=" DISABLED on this workstation: the always-on GCP controller (infra/gcp/CI-VM.md) runs this lane against GitHub; a poll of the local checkout would publish content from unpushed commits. Enable here only while that box is down."
 fi
 
+# The Jenkinsfile itself is fetched by a NON-lightweight checkout into <job>@script/ (kept between
+# builds). By default that is a full clone: 2.6 GB for this repo (10.8k commits of GLB history), on
+# top of whatever the pipeline clones for itself. Fine on the Mac; on the 20 GB micro with ~3.7 GB
+# free it fills the disk before the first stage runs. The content job therefore narrows the
+# fetch to its one branch (refspec — origin carries ~750 branches, and a depth-1 clone of all
+# their tips is still 1.1 GB against 0.27 GB for main alone) and takes a shallow, sparse clone
+# that checks out nothing but the Jenkinsfile: ≈0.3 GB, kept. The pipeline's own checkout
+# inherits the refspec through scm.userRemoteConfigs.
+content_scm_extensions() {
+  cat <<XML
+        <hudson.plugins.git.extensions.impl.CloneOption>
+          <shallow>true</shallow>
+          <noTags>true</noTags>
+          <reference></reference>
+          <depth>1</depth>
+          <honorRefspec>true</honorRefspec>
+        </hudson.plugins.git.extensions.impl.CloneOption>
+        <hudson.plugins.git.extensions.impl.SparseCheckoutPaths>
+          <sparseCheckoutPaths>
+            <hudson.plugins.git.extensions.impl.SparseCheckoutPath>
+              <path>$1</path>
+            </hudson.plugins.git.extensions.impl.SparseCheckoutPath>
+          </sparseCheckoutPaths>
+        </hudson.plugins.git.extensions.impl.SparseCheckoutPaths>
+XML
+}
+
 write_job() {
-  local name="$1" script_path="$2" triggers="$3" desc="$4" disabled="${5:-false}"
+  local name="$1" script_path="$2" triggers="$3" desc="$4" disabled="${5:-false}" refspec="${6:-}" extensions="${7:-}"
   local dir="${JENKINS_HOME}/jobs/${name}"
+  local refspec_xml="" extensions_xml="<extensions/>"
+  [[ -n "${refspec}" ]] && refspec_xml="
+          <refspec>${refspec}</refspec>"
+  [[ -n "${extensions}" ]] && extensions_xml="<extensions>
+${extensions}
+      </extensions>"
   mkdir -p "${dir}"
   cat > "${dir}/config.xml" <<XML
 <?xml version='1.1' encoding='UTF-8'?>
@@ -123,7 +156,7 @@ write_job() {
       <configVersion>2</configVersion>
       <userRemoteConfigs>
         <hudson.plugins.git.UserRemoteConfig>
-          <url>${REPO_URL}</url>
+          <url>${REPO_URL}</url>${refspec_xml}
         </hudson.plugins.git.UserRemoteConfig>
       </userRemoteConfigs>
       <branches>
@@ -133,7 +166,7 @@ write_job() {
       </branches>
       <doGenerateSubmoduleConfigurations>false</doGenerateSubmoduleConfigurations>
       <submoduleCfg class="empty-list"/>
-      <extensions/>
+      ${extensions_xml}
     </scm>
     <scriptPath>${script_path}</scriptPath>
     <lightweight>false</lightweight>
@@ -194,9 +227,17 @@ POLL="<hudson.triggers.SCMTrigger><spec>H/5 * * * *</spec><ignorePostCommitHooks
 # Content: the owner's "commit mechanism" for GLBs and catalog slices (content/README.md). Polls
 # main every 5 minutes; a run with nothing new for prod is a NOOP. Pure node + rsync + ssh, no
 # npm ci, no Go — the one lane that fits the free-tier box, so it is never disabled by memory.
+#
+# Polling needs a baseline: a Pipeline job whose last build never reached a checkout (build #1 on
+# the box failed at clone before the deploy key existed) has no SCM to compare against, so every
+# poll answers "No changes" in milliseconds and nothing is ever scheduled. Once the key works and
+# the Jenkinsfile is on the branch, start ONE build by hand (infra/gcp/ci-vm.sh kick
+# chessalive-content); from then on the poll compares against that build and runs on its own.
 write_job "chessalive-content" "Jenkinsfile.content" "${POLL}" \
-  "ChessAlive CONTENT lane - ships committed content/uploads + content/catalog to the OCI box: installs files prod lacks, merges the catalog slices into the live catalog and bumps appStateRevision, or does nothing when prod already matches. Polls main every 5 minutes. Needs only node, rsync and ssh (no npm ci, no Go: the catalog is written by the chessd-migrate the last code release installed on the box), so it runs in under 200 MB and fits this e2-micro.${CONTENT_DISABLED_NOTE}" \
-  "${CONTENT_DISABLED_XML}"
+  "ChessAlive CONTENT lane - ships committed content/uploads + content/catalog to the OCI box: installs files prod lacks, merges the catalog slices into the live catalog and bumps appStateRevision, or does nothing when prod already matches. Polls ${BRANCH} every 5 minutes (after one manual first build gives the poll a baseline). Needs only node, rsync and ssh (no npm ci, no Go: the catalog is written by the chessd-migrate the last code release installed on the box), so it runs in under 200 MB and fits this e2-micro.${CONTENT_DISABLED_NOTE}" \
+  "${CONTENT_DISABLED_XML}" \
+  "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}" \
+  "$(content_scm_extensions Jenkinsfile.content)"
 
 # Dev polls every 5 minutes. Cheap (a ls-remote against GitHub), and it means a commit gets checked
 # without you remembering to press anything.

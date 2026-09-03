@@ -162,6 +162,21 @@ sudo -u jenkins -H ssh -n -o BatchMode=yes ubuntu@144.24.117.171 'sudo -n true &
 sudo -u jenkins -H git ls-remote git@github.com:ChessAlive/ChessAlive.git main
 ```
 
+(The ChessAlive org has deploy keys switched off — `deploy_keys_enabled_for_repositories: false`
+— so an org admin must enable them under Settings → Member privileges → Deploy keys before
+`gh repo deploy-key add … --repo ChessAlive/ChessAlive` will take the key. Do not attach it to a
+personal account instead: that would give the box write access to every repo that account can push to.)
+
+**Then start the first build by hand** — once, after the key works and `Jenkinsfile.content` is
+on `main`: from the ChessAlive checkout, `infra/gcp/ci-vm.sh kick chessalive-content`. A Pipeline
+job polls by comparing the remote with its last build's SCM state; the content job's build #1
+failed at clone (no key yet) and recorded none, so every poll says "No changes" and never
+schedules anything until one build has checked out. After that the poll is self-sufficient.
+
+The content job is written with a `main`-only refspec and a shallow, sparse `@script` clone
+(only `Jenkinsfile.content` checked out): the default non-lightweight Jenkinsfile fetch is a full
+clone of the repo — 2.6 GB, kept between builds — which would fill the micro's disk on its own.
+
 ### Reaching it
 
 Jenkins listens on loopback only. From your Mac:
@@ -178,7 +193,8 @@ Local port 8080 is taken while the Mac's own `jenkins-lts` is running — use `-
 969 MB RAM, 2 GB swap, 20 GB disk with **3.7 GB free** (the retired site still occupies ≈7 GB
 under `/opt/chessalive*`). Idle Jenkins is ≈370 MB RSS on a 384 MB heap, leaving ≈200–300 MB
 for a build: enough for the content lane's shallow clone + node + rsync, not for anything that
-runs `npm ci`. Keep it that way — do not enable the build lanes here without a resize.
+runs `npm ci`. Keep it that way — do not enable the build lanes here without a resize. A content
+run peaks at ≈1.1 GB of disk (0.3 GB `@script` kept + 0.8 GB workspace that `cleanWs` removes).
 
 ### Optional: moving the build lanes here
 
