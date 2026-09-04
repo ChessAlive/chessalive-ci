@@ -176,8 +176,12 @@ config `install-jobs.sh` writes). From the ChessAlive checkout:
 ```bash
 infra/gcp/ci-vm.sh kick chessalive-content DRY_RUN=true   # plan only: what would be installed, how the catalog would change
 infra/gcp/ci-vm.sh kick chessalive-content                # plan, then wait at Approve (up to 8 h)
-infra/gcp/ci-vm.sh approve chessalive-content [build]     # click Publish on the waiting build (default: the latest)
+infra/gcp/ci-vm.sh approve chessalive-content [build]     # show the waiting build's plan, ask, click Publish (default: the latest; --yes = don't ask)
 ```
+
+The three build parameters (`BRANCH`, `DRY_RUN`, `REQUIRE_APPROVAL`) are part of the job config
+`install-jobs.sh` writes, so a parameterised kick works before the job has ever run;
+`Jenkinsfile.content` re-declares them on every run and owns their meaning.
 
 or `ci-vm.sh tunnel` → <http://127.0.0.1:8080/job/chessalive-content/> → *Build with Parameters*,
 read the plan in the build's description, click *Publish*. A plan that is a NOOP (prod already
