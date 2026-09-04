@@ -35,7 +35,9 @@
 #                                MemTotal < 3 GB: a polling dev job would otherwise start a build
 #                                on the first push and OOM the box. The content lane
 #                                (Jenkinsfile.content: node + rsync + ssh, no npm ci, no Go) is
-#                                always enabled — it is what the e2-micro is kept for.
+#                                always enabled — it is what the e2-micro is kept for — but has no
+#                                trigger of its own: manual, Build with Parameters -> plan ->
+#                                approve -> publish (the owner wants no automatic publishing).
 #
 set -euo pipefail
 
@@ -358,7 +360,8 @@ $(printf '\033[1mDone.\033[0m') Jenkins ${JENKINS_VERSION} at ${JENKINS_URL} on 
 
   From your Mac:   infra/gcp/ci-vm.sh tunnel      → http://127.0.0.1:8080  (admin / the password file)
   SSH for the jenkins user (GitHub deploy key + OCI host):  sudo ${REPO_DIR}/lib/ci-user-keys.sh
-  chessalive-content is enabled (polls main every 5 min; node + rsync + ssh only).
+  chessalive-content is enabled but MANUAL (no SCM trigger — the owner wants no automatic publishing):
+    infra/gcp/ci-vm.sh kick chessalive-content [DRY_RUN=true] → read the plan → ci-vm.sh approve chessalive-content
   dev/release/config $( [[ "${DISABLE_JOBS}" == "yes" ]] && echo "DISABLED (${MEM_MB} MB RAM cannot run a build — they stay on the workstation Jenkins; resize, then re-run with DISABLE_JOBS=no)" || echo "enabled" ).
   Heap is ${HEAP}; after a resize re-run with CHESSALIVE_JENKINS_HEAP=2g.
 EOT

@@ -24,9 +24,10 @@
 #                  Unset on Linux → decided from MemTotal (< 3 GB = yes), so a plain re-run on the
 #                  e2-micro can never enable a lane that would OOM it.
 #                  The CONTENT job ignores this knob: it is the lane that fits the micro (node +
-#                  rsync + ssh, ~200 MB) and the whole reason the box exists. It is written disabled
-#                  only for a file:// remote (a workstation), where a poll of the local checkout
-#                  would publish content from commits that were never pushed.
+#                  rsync + ssh, ~200 MB) and the whole reason the box exists. It has no SCM trigger
+#                  (manual: Build with Parameters -> plan -> approve -> publish). It is written
+#                  disabled only for a file:// remote (a workstation), where a build of the local
+#                  checkout would publish content from commits that were never pushed.
 #
 set -euo pipefail
 
@@ -100,12 +101,12 @@ if [[ "${DISABLE_JOBS}" == "yes" ]]; then
   BUILD_DISABLED_NOTE=" DISABLED on this controller: ${MEM_MB:-unknown} MB RAM cannot run a build (needs about 3 GB for npm ci + vitest + expo export); it runs on the workstation Jenkins until this box is resized (infra/gcp/ci-vm.sh resize, then DISABLE_JOBS=no)."
 fi
 
-# The content lane: enabled everywhere except a workstation polling its own checkout.
+# The content lane: enabled everywhere except a workstation building from its own checkout.
 CONTENT_DISABLED_XML=false
 CONTENT_DISABLED_NOTE=""
 if [[ "${REPO_URL}" == file://* ]]; then
   CONTENT_DISABLED_XML=true
-  CONTENT_DISABLED_NOTE=" DISABLED on this workstation: the always-on GCP controller (infra/gcp/CI-VM.md) runs this lane against GitHub; a poll of the local checkout would publish content from unpushed commits. Enable here only while that box is down."
+  CONTENT_DISABLED_NOTE=" DISABLED on this workstation: the always-on GCP controller (infra/gcp/CI-VM.md) runs this lane against GitHub; a build of the local checkout would publish content from unpushed commits. Enable here only while that box is down."
 fi
 
 # The Jenkinsfile itself is fetched by a NON-lightweight checkout into <job>@script/ (kept between
@@ -224,17 +225,17 @@ echo "  repo: ${REPO_URL}"
 
 POLL="<hudson.triggers.SCMTrigger><spec>H/5 * * * *</spec><ignorePostCommitHooks>false</ignorePostCommitHooks></hudson.triggers.SCMTrigger>"
 
-# Content: the owner's "commit mechanism" for GLBs and catalog slices (content/README.md). Polls
-# main every 5 minutes; a run with nothing new for prod is a NOOP. Pure node + rsync + ssh, no
-# npm ci, no Go — the one lane that fits the free-tier box, so it is never disabled by memory.
-#
-# Polling needs a baseline: a Pipeline job whose last build never reached a checkout (build #1 on
-# the box failed at clone before the deploy key existed) has no SCM to compare against, so every
-# poll answers "No changes" in milliseconds and nothing is ever scheduled. Once the key works and
-# the Jenkinsfile is on the branch, start ONE build by hand (infra/gcp/ci-vm.sh kick
-# chessalive-content); from then on the poll compares against that build and runs on its own.
-write_job "chessalive-content" "Jenkinsfile.content" "${POLL}" \
-  "ChessAlive CONTENT lane - ships committed content/uploads + content/catalog to the OCI box: installs files prod lacks, merges the catalog slices into the live catalog and bumps appStateRevision, or does nothing when prod already matches. Polls ${BRANCH} every 5 minutes (after one manual first build gives the poll a baseline). Needs only node, rsync and ssh (no npm ci, no Go: the catalog is written by the chessd-migrate the last code release installed on the box), so it runs in under 200 MB and fits this e2-micro.${CONTENT_DISABLED_NOTE}" \
+# Content: the owner's "commit mechanism" for GLBs and catalog slices (content/README.md) — and,
+# by the same owner's rule, MANUAL: "I don't want automatic publishing." A commit stages content; a
+# person releases it. So this job gets NO SCM trigger (an empty <triggers/>): the poll it used to
+# have shipped a catalog change (build #3 on the box, revision 14 -> 15) minutes after a commit
+# landed with nobody deciding it should. The flow is Build with Parameters (or
+# infra/gcp/ci-vm.sh kick chessalive-content [DRY_RUN=true]) -> the pipeline plans
+# (publish-content.sh --dry-run, plan in the build description) -> a human clicks Publish
+# (ci-vm.sh approve chessalive-content) -> the real publish. Pure node + rsync + ssh, no npm ci,
+# no Go — the one lane that fits the free-tier box, so it is never disabled by memory.
+write_job "chessalive-content" "Jenkinsfile.content" "" \
+  "ChessAlive CONTENT lane - manual: Build with Parameters -> plan -> approve -> publish. Ships committed content/uploads + content/catalog to the OCI box: installs files prod lacks, merges the catalog slices into the live catalog and bumps appStateRevision, or does nothing when prod already matches. Never runs on its own (no SCM trigger - the owner wants no automatic publishing; a commit stages content, a person releases it): the Plan stage is a dry run whose result lands in the build description, and the Approve gate waits up to 8 hours for a human to click Publish. DRY_RUN=true plans and writes nothing. Needs only node, rsync and ssh (no npm ci, no Go: the catalog is written by the chessd-migrate the last code release installed on the box), so it runs in under 200 MB and fits this e2-micro.${CONTENT_DISABLED_NOTE}" \
   "${CONTENT_DISABLED_XML}" \
   "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}" \
   "$(content_scm_extensions Jenkinsfile.content)"

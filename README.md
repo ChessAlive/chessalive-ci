@@ -63,7 +63,7 @@ port is a standing invitation.
 |---|---|---|
 | `chessalive-dev` | typecheck · lint · unit + infra tests · `go vet` · `go test` · cross-compile for linux/arm64 | Polls your checkout every 5 min. Touches no server — safe on every commit. |
 | `chessalive-release` | Everything above, plus the slow gates (npm advisory audit, narration coverage, perf and bundle budgets), then deploys `chessd` and the web bundle to the OCI host. | Manual. Pauses for your approval *after* the guard is green, and rolls back automatically if the post-restart health gate fails. |
-| `chessalive-content` | Ships committed `content/uploads` + `content/catalog` to the OCI host: installs the files prod lacks, merges the catalog slices, bumps `appStateRevision` — or does nothing when prod already matches. Node + rsync + ssh only. | Polls `main` every 5 min **on the GCP box** (below). Written disabled on a workstation, where a poll of the local checkout would publish unpushed commits. |
+| `chessalive-content` | Ships committed `content/uploads` + `content/catalog` to the OCI host: installs the files prod lacks, merges the catalog slices, bumps `appStateRevision` — or does nothing when prod already matches. Node + rsync + ssh only. | **Manual, on the GCP box** (below): Build with Parameters → Plan (a dry run, written into the build description) → Approve (a human clicks Publish; 8-hour gate) → Publish. No SCM trigger — the owner wants no automatic publishing. Written disabled on a workstation, where a build of the local checkout would publish unpushed commits. |
 
 ## Where things live
 
@@ -108,8 +108,11 @@ nothing but Jenkins. The lifecycle helper on the ChessAlive side is `infra/gcp/c
 box is documented in `infra/gcp/CI-VM.md` there; this section is the installer's half.
 
 **The decision (2026-09-04): the micro stays free-tier.** It runs one lane, `chessalive-content`
-(`Jenkinsfile.content`) — the owner's "commit mechanism" for GLBs and catalog slices: a poll of
-`main` every five minutes, a pure-node verify, then `infra/oci/publish-content.sh` with
+(`Jenkinsfile.content`) — the owner's "commit mechanism" for GLBs and catalog slices, **started by
+hand, never by a poll** ("I don't want automatic publishing"): a shallow clone of the chosen
+branch, a pure-node verify, then `infra/oci/publish-content.sh --dry-run` as the Plan (its
+would-install / identical / CONFLICT verdicts and the catalog diff land in the build description),
+an Approve gate a human clicks through, and only then the real `publish-content.sh` — all with
 `MIGRATE_BIN=remote`, which needs only node, rsync, ssh, curl and git (no `npm ci`, no Go) and
 runs in well under 200 MB. `chessalive-dev`, `-release` and `-config` are written on the box too
 but **disabled**: they need several GB and stay on the Mac's `jenkins-lts` until the VM is resized
@@ -167,11 +170,20 @@ sudo -u jenkins -H git ls-remote git@github.com:ChessAlive/ChessAlive.git main
 `gh repo deploy-key add … --repo ChessAlive/ChessAlive` will take the key. Do not attach it to a
 personal account instead: that would give the box write access to every repo that account can push to.)
 
-**Then start the first build by hand** — once, after the key works and `Jenkinsfile.content` is
-on `main`: from the ChessAlive checkout, `infra/gcp/ci-vm.sh kick chessalive-content`. A Pipeline
-job polls by comparing the remote with its last build's SCM state; the content job's build #1
-failed at clone (no key yet) and recorded none, so every poll says "No changes" and never
-schedules anything until one build has checked out. After that the poll is self-sufficient.
+**Every build is started by hand** — the job has no SCM trigger (`<triggers/>` is empty in the
+config `install-jobs.sh` writes). From the ChessAlive checkout:
+
+```bash
+infra/gcp/ci-vm.sh kick chessalive-content DRY_RUN=true   # plan only: what would be installed, how the catalog would change
+infra/gcp/ci-vm.sh kick chessalive-content                # plan, then wait at Approve (up to 8 h)
+infra/gcp/ci-vm.sh approve chessalive-content [build]     # click Publish on the waiting build (default: the latest)
+```
+
+or `ci-vm.sh tunnel` → <http://127.0.0.1:8080/job/chessalive-content/> → *Build with Parameters*,
+read the plan in the build's description, click *Publish*. A plan that is a NOOP (prod already
+carries the commit) skips the gate and the publish on its own. The poll this lane once had is gone
+for a reason: its build #3 shipped a catalog change minutes after a commit landed, with nobody
+deciding it should.
 
 The content job is written with a `main`-only refspec and a shallow, sparse `@script` clone
 (only `Jenkinsfile.content` checked out): the default non-lightweight Jenkinsfile fetch is a full
