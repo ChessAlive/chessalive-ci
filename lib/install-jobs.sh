@@ -117,6 +117,37 @@ fi
 # their tips is still 1.1 GB against 0.27 GB for main alone) and takes a shallow, sparse clone
 # that checks out nothing but the Jenkinsfile: ≈0.3 GB, kept. The pipeline's own checkout
 # inherits the refspec through scm.userRemoteConfigs.
+# The content job's build parameters, written into the job so that "Build with Parameters" (and
+# `ci-vm.sh kick chessalive-content DRY_RUN=true`) works from the moment the job exists. Declarative
+# re-declares them from Jenkinsfile.content on every run — that file is the source of truth for
+# names, defaults and the WHY — but a job that has never run carries none, and Jenkins answers a
+# parameterised build request on such a job with 500 "not parameterized". Keep the three in step
+# with the Jenkinsfile's parameters block.
+content_parameters() {
+  cat <<XML
+    <hudson.model.ParametersDefinitionProperty>
+      <parameterDefinitions>
+        <hudson.model.StringParameterDefinition>
+          <name>BRANCH</name>
+          <description>Branch whose content/ to publish. main is what players should see; another branch is for rehearsing a content commit before it merges (pair it with DRY_RUN). A plain branch name, not a ref.</description>
+          <defaultValue>main</defaultValue>
+          <trim>true</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.BooleanParameterDefinition>
+          <name>DRY_RUN</name>
+          <description>Plan only: what would be installed and how the catalog would change, written into the build description. Nothing is installed or written.</description>
+          <defaultValue>false</defaultValue>
+        </hudson.model.BooleanParameterDefinition>
+        <hudson.model.BooleanParameterDefinition>
+          <name>REQUIRE_APPROVAL</name>
+          <description>Pause after the plan and wait (up to 8 hours) for a human to click Publish. ON by default: a commit stages content, a person releases it. Turn OFF only for a publish you have already planned with DRY_RUN.</description>
+          <defaultValue>true</defaultValue>
+        </hudson.model.BooleanParameterDefinition>
+      </parameterDefinitions>
+    </hudson.model.ParametersDefinitionProperty>
+XML
+}
+
 content_scm_extensions() {
   cat <<XML
         <hudson.plugins.git.extensions.impl.CloneOption>
@@ -137,9 +168,12 @@ XML
 }
 
 write_job() {
-  local name="$1" script_path="$2" triggers="$3" desc="$4" disabled="${5:-false}" refspec="${6:-}" extensions="${7:-}"
+  local name="$1" script_path="$2" triggers="$3" desc="$4" disabled="${5:-false}" refspec="${6:-}" extensions="${7:-}" properties="${8:-}"
   local dir="${JENKINS_HOME}/jobs/${name}"
-  local refspec_xml="" extensions_xml="<extensions/>"
+  local refspec_xml="" extensions_xml="<extensions/>" properties_xml="<properties/>"
+  [[ -n "${properties}" ]] && properties_xml="<properties>
+${properties}
+  </properties>"
   [[ -n "${refspec}" ]] && refspec_xml="
           <refspec>${refspec}</refspec>"
   [[ -n "${extensions}" ]] && extensions_xml="<extensions>
@@ -151,7 +185,7 @@ ${extensions}
 <flow-definition plugin="workflow-job">
   <description>${desc}</description>
   <keepDependencies>false</keepDependencies>
-  <properties/>
+  ${properties_xml}
   <definition class="org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition" plugin="workflow-cps">
     <scm class="hudson.plugins.git.GitSCM" plugin="git">
       <configVersion>2</configVersion>
@@ -238,7 +272,8 @@ write_job "chessalive-content" "Jenkinsfile.content" "" \
   "ChessAlive CONTENT lane - manual: Build with Parameters -> plan -> approve -> publish. Ships committed content/uploads + content/catalog to the OCI box: installs files prod lacks, merges the catalog slices into the live catalog and bumps appStateRevision, or does nothing when prod already matches. Never runs on its own (no SCM trigger - the owner wants no automatic publishing; a commit stages content, a person releases it): the Plan stage is a dry run whose result lands in the build description, and the Approve gate waits up to 8 hours for a human to click Publish. DRY_RUN=true plans and writes nothing. Needs only node, rsync and ssh (no npm ci, no Go: the catalog is written by the chessd-migrate the last code release installed on the box), so it runs in under 200 MB and fits this e2-micro.${CONTENT_DISABLED_NOTE}" \
   "${CONTENT_DISABLED_XML}" \
   "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}" \
-  "$(content_scm_extensions Jenkinsfile.content)"
+  "$(content_scm_extensions Jenkinsfile.content)" \
+  "$(content_parameters)"
 
 # Dev polls every 5 minutes. Cheap (a ls-remote against GitHub), and it means a commit gets checked
 # without you remembering to press anything.
