@@ -28,6 +28,15 @@
 #                  (manual: Build with Parameters -> plan -> approve -> publish). It is written
 #                  disabled only for a file:// remote (a workstation), where a build of the local
 #                  checkout would publish content from commits that were never pushed.
+#                  The RELEASE job ignores it too when the build-backend file (below) says
+#                  cloudbuild: then the build runs on Google Cloud Build and the box only fetches,
+#                  verifies and deploys — node + gsutil + rsync + ssh, which the micro can do.
+#   build-backend  not an env knob but a FILE the Jenkinsfile reads on the agent:
+#                  ${HOME}/.jenkins/build-backend (/var/lib/jenkins/.jenkins/build-backend on
+#                  Linux, ~/.jenkins/build-backend on a Mac). Containing "cloudbuild" makes
+#                  Jenkinsfile.release's BUILD_BACKEND=auto resolve to cloudbuild; absent = local.
+#                  install-linux.sh writes it (CHESSALIVE_BUILD_BACKEND); nothing writes it on a
+#                  Mac. This script only READS it, to decide whether the release job is enabled.
 #
 set -euo pipefail
 
@@ -61,6 +70,12 @@ if [[ -z "${TOOLCHAIN_DIR:-}" ]]; then
   else
     TOOLCHAIN_DIR="${JENKINS_HOME}/toolchain/bin"
   fi
+fi
+# Same place the Jenkinsfile looks: ${HOME}/.jenkins/build-backend for the user Jenkins runs as.
+if [[ "${LINUX_BOX}" == "yes" ]]; then
+  BACKEND_FILE="${JENKINS_HOME}/.jenkins/build-backend"
+else
+  BACKEND_FILE="${JENKINS_HOME}/build-backend"
 fi
 
 # ── remote ───────────────────────────────────────────────────────────────────────────────────────
@@ -99,6 +114,23 @@ BUILD_DISABLED_NOTE=""
 if [[ "${DISABLE_JOBS}" == "yes" ]]; then
   BUILD_DISABLED_XML=true
   BUILD_DISABLED_NOTE=" DISABLED on this controller: ${MEM_MB:-unknown} MB RAM cannot run a build (needs about 3 GB for npm ci + vitest + expo export); it runs on the workstation Jenkins until this box is resized (infra/gcp/ci-vm.sh resize, then DISABLE_JOBS=no)."
+fi
+
+# The release lane is the exception to the RAM guard when the agent is set to build on Cloud
+# Build: Jenkinsfile.release then replaces Install/Guard/Test/Build/Budgets with one
+# `gcloud builds submit` (cloudbuild/release.yaml in ChessAlive) and a fetch of the built
+# artifacts from gs://chessalive-ci-artifacts — the box never runs npm ci. What remains on the
+# agent is a depth-1 checkout, gcloud/gsutil, and the same Content/Deploy/Smoke tail the content
+# lane already proved fits. dev and config stay under the guard: they still build locally.
+RELEASE_BACKEND=local
+if [[ -s "${BACKEND_FILE}" ]] && grep -q cloudbuild "${BACKEND_FILE}"; then
+  RELEASE_BACKEND=cloudbuild
+fi
+RELEASE_DISABLED_XML="${BUILD_DISABLED_XML}"
+RELEASE_NOTE="${BUILD_DISABLED_NOTE}"
+if [[ "${RELEASE_BACKEND}" == "cloudbuild" ]]; then
+  RELEASE_DISABLED_XML=false
+  RELEASE_NOTE=" ENABLED here with BUILD_BACKEND=cloudbuild (${BACKEND_FILE}): the guard, tests and build run as ONE Google Cloud Build (cloudbuild/release.yaml, project chessalive-495918, free tier = 120 build-minutes/day, a full release is about 35 of them) and this controller only fetches the binaries + web bundle from gs://chessalive-ci-artifacts/releases/SHA/, verifies every sha256 against the manifest, then runs Approve -> Content -> Deploy -> Smoke exactly as the Mac does. Start it by hand: infra/gcp/ci-vm.sh kick chessalive-release [REQUIRE_APPROVAL=true] [SKIP_WEB=true] ...; watch the Cloud Build in the build's console log or at the URL in its description. The Assets stage (oci CLI) does not run here - sync assets from the Mac when one changed."
 fi
 
 # The content lane: enabled everywhere except a workstation building from its own checkout.
@@ -143,6 +175,61 @@ content_parameters() {
           <description>Pause after the plan and wait (up to 8 hours) for a human to click Publish. ON by default: a commit stages content, a person releases it. Turn OFF only for a publish you have already planned with DRY_RUN.</description>
           <defaultValue>true</defaultValue>
         </hudson.model.BooleanParameterDefinition>
+      </parameterDefinitions>
+    </hudson.model.ParametersDefinitionProperty>
+XML
+}
+
+# The release job's parameters, for the same reason as the content job's: `ci-vm.sh kick
+# chessalive-release REQUIRE_APPROVAL=true` must work on a job that has never run. Keep in step
+# with Jenkinsfile.release's parameters block (names, defaults; the descriptions there are the
+# full WHY, these are the short form).
+release_parameters() {
+  cat <<XML
+    <hudson.model.ParametersDefinitionProperty>
+      <parameterDefinitions>
+        <hudson.model.StringParameterDefinition>
+          <name>BRANCH</name>
+          <description>Branch to release (a plain branch name). main is what players get.</description>
+          <defaultValue>main</defaultValue>
+          <trim>true</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.BooleanParameterDefinition>
+          <name>SKIP_WEB</name>
+          <description>Server-only deploy: ship the chessd binary, keep the web bundle the host has.</description>
+          <defaultValue>false</defaultValue>
+        </hudson.model.BooleanParameterDefinition>
+        <hudson.model.BooleanParameterDefinition>
+          <name>SKIP_ASSETS</name>
+          <description>Skip the object-storage sync (audio, models, images). Only runs on the local backend anyway; on cloudbuild the log says how to sync from the Mac.</description>
+          <defaultValue>false</defaultValue>
+        </hudson.model.BooleanParameterDefinition>
+        <hudson.model.BooleanParameterDefinition>
+          <name>SKIP_CONTENT</name>
+          <description>Skip publishing content/ (hero GLBs + catalog slices) to the box. Already a no-op when prod matches the commit.</description>
+          <defaultValue>false</defaultValue>
+        </hudson.model.BooleanParameterDefinition>
+        <hudson.model.BooleanParameterDefinition>
+          <name>REQUIRE_APPROVAL</name>
+          <description>Pause before deploying and wait (up to 8 hours) for a human to click Deploy: infra/gcp/ci-vm.sh approve chessalive-release.</description>
+          <defaultValue>false</defaultValue>
+        </hudson.model.BooleanParameterDefinition>
+        <hudson.model.BooleanParameterDefinition>
+          <name>SKIP_TESTS</name>
+          <description>DANGER: skip Guard and Test. The build is tagged NO-GATES.</description>
+          <defaultValue>false</defaultValue>
+        </hudson.model.BooleanParameterDefinition>
+        <hudson.model.ChoiceParameterDefinition>
+          <name>BUILD_BACKEND</name>
+          <description>auto = cloudbuild when this agent's ~/.jenkins/build-backend says so (the GCP box), else local (the Mac). cloudbuild = one Google Cloud Build does the guard/tests/build; this agent fetches, verifies and deploys.</description>
+          <choices class="java.util.Arrays\$ArrayList">
+            <a class="string-array">
+              <string>auto</string>
+              <string>local</string>
+              <string>cloudbuild</string>
+            </a>
+          </choices>
+        </hudson.model.ChoiceParameterDefinition>
       </parameterDefinitions>
     </hudson.model.ParametersDefinitionProperty>
 XML
@@ -225,7 +312,10 @@ XML
 link_toolchain() {
   mkdir -p "${TOOLCHAIN_DIR}"
   local resolved=0
-  for tool in node npm npx go git; do
+  # gcloud + gsutil are OPTIONAL: the cloudbuild backend of the release lane needs them (the
+  # box: /usr/bin from google-cloud-cli, authenticated by the VM's service account through the
+  # metadata server); the local backend never calls them, so a Mac without them is fine.
+  for tool in node npm npx go git gcloud gsutil; do
     local path=""
     # Prefer the interactive shell's own resolution (that is what you build with), then a login
     # shell for nvm/asdf shims, then the fixed places install-linux.sh puts things.
@@ -238,14 +328,17 @@ link_toolchain() {
     fi
     if [[ -n "${path}" ]]; then
       ln -sfn "${path}" "${TOOLCHAIN_DIR}/${tool}"
-      printf '  \033[32m✓\033[0m %-5s %s\n' "${tool}" "${path}"
+      printf '  \033[32m✓\033[0m %-6s %s\n' "${tool}" "${path}"
       resolved=$((resolved + 1))
+    elif [[ "${tool}" == gcloud || "${tool}" == gsutil ]]; then
+      rm -f "${TOOLCHAIN_DIR}/${tool}"
+      printf '  \033[33m!\033[0m %-6s not found — left out of the shim (only the release lane'"'"'s cloudbuild backend needs it)\n' "${tool}"
     else
       # No link rather than a dangling one: a dangling `go` makes `command -v go` succeed and the
       # exec fail with a confusing ENOENT, whereas an absent one lets publish-content.sh pick
       # MIGRATE_BIN=remote on its own. The content lane needs no Go at all.
       rm -f "${TOOLCHAIN_DIR}/${tool}"
-      printf '  \033[33m!\033[0m %-5s not found — left out of the shim (lanes needing it will fail; the content lane does not)\n' "${tool}"
+      printf '  \033[33m!\033[0m %-6s not found — left out of the shim (lanes needing it will fail; the content lane does not)\n' "${tool}"
     fi
   done
   [[ "${resolved}" -gt 0 ]] || die "resolved no build tools at all; Jenkins cannot build anything"
@@ -256,6 +349,14 @@ link_toolchain
 
 echo "  repo: ${REPO_URL}"
 [[ "${DISABLE_JOBS}" == "yes" ]] && warn "build lanes written DISABLED (${MEM_MB:-?} MB RAM < ${MIN_BUILD_MB} MB)"
+if [[ "${RELEASE_BACKEND}" == "cloudbuild" ]]; then
+  ok "release lane: BUILD_BACKEND=cloudbuild (${BACKEND_FILE}) — written ENABLED; builds run on Google Cloud Build"
+  for t in gcloud gsutil; do
+    [[ -x "${TOOLCHAIN_DIR}/${t}" ]] || warn "${t} is not in the shim: the release lane's Cloud Build stage will fail until google-cloud-cli is installed (install-linux.sh does that)"
+  done
+else
+  echo "  release lane: BUILD_BACKEND=local (no cloudbuild in ${BACKEND_FILE})"
+fi
 
 POLL="<hudson.triggers.SCMTrigger><spec>H/5 * * * *</spec><ignorePostCommitHooks>false</ignorePostCommitHooks></hudson.triggers.SCMTrigger>"
 
@@ -282,10 +383,22 @@ write_job "chessalive-dev" "Jenkinsfile.dev" "${POLL}" \
   "${BUILD_DISABLED_XML}"
 
 # Release is manual only. A release is a decision; the pipeline also pauses for confirmation
-# before it deploys anything.
+# before it deploys anything. On the Linux box its Jenkinsfile fetch gets the same main-only,
+# shallow, sparse @script clone as the content job (a default full clone is 2.6 GB — the micro's
+# whole free disk); on a workstation the file:// remote is cheap and stays as it was. The
+# parameters are written in so a kick with NAME=value works before the first run.
+RELEASE_REFSPEC=""
+RELEASE_EXTENSIONS=""
+if [[ "${LINUX_BOX}" == "yes" ]]; then
+  RELEASE_REFSPEC="+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}"
+  RELEASE_EXTENSIONS="$(content_scm_extensions Jenkinsfile.release)"
+fi
 write_job "chessalive-release" "Jenkinsfile.release" "" \
-  "ChessAlive RELEASE lane - full guard, then deploy chessd + web bundle to the OCI box with automatic rollback on health-gate failure. Manual trigger with an in-pipeline approval step.${BUILD_DISABLED_NOTE}" \
-  "${BUILD_DISABLED_XML}"
+  "ChessAlive RELEASE lane - full guard, then deploy chessd + web bundle to the OCI box with automatic rollback on health-gate failure. Manual trigger with an in-pipeline approval step.${RELEASE_NOTE}" \
+  "${RELEASE_DISABLED_XML}" \
+  "${RELEASE_REFSPEC}" \
+  "${RELEASE_EXTENSIONS}" \
+  "$(release_parameters)"
 
 # Config/secrets. Manual only, and the pipeline itself gates every mutating action behind an
 # approval step plus a post-change health check.

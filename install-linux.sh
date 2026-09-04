@@ -38,6 +38,22 @@
 #                                always enabled — it is what the e2-micro is kept for — but has no
 #                                trigger of its own: manual, Build with Parameters -> plan ->
 #                                approve -> publish (the owner wants no automatic publishing).
+#   CHESSALIVE_BUILD_BACKEND     cloudbuild (default) | local. Where Jenkinsfile.release builds
+#                                when its BUILD_BACKEND parameter is "auto". cloudbuild writes
+#                                ${JENKINS_HOME}/.jenkins/build-backend = cloudbuild, which makes
+#                                the release lane hand Install/Guard/Test/Build/Budgets to ONE
+#                                Google Cloud Build (cloudbuild/release.yaml in ChessAlive,
+#                                project chessalive-495918; the free tier is 120 build-minutes a
+#                                day and a full release costs about 35) and fetch the binaries +
+#                                web bundle from gs://chessalive-ci-artifacts — so the RELEASE job
+#                                is written ENABLED even on the micro, RAM guard notwithstanding:
+#                                what runs here is a depth-1 clone, gcloud/gsutil and the same
+#                                Content/Deploy/Smoke tail the content lane already fits in.
+#                                google-cloud-cli is installed for it (apt, the cloud-sdk source
+#                                the GCE image ships) and authenticates as the VM's service
+#                                account through the metadata server: no key file, nothing to
+#                                rotate. local removes the file (dev/release/config then all
+#                                follow DISABLE_JOBS, as before).
 #
 set -euo pipefail
 
@@ -160,6 +176,36 @@ apt-get install -y -qq --no-install-recommends \
   libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2 \
   fonts-liberation >/dev/null
 ok "chromium runtime libraries (playwright)"
+
+# ── 2a. Google Cloud CLI (the release lane's cloudbuild backend) ─────────────────────────────────
+# gcloud submits cloudbuild/release.yaml and streams its log; gsutil fetches the artifacts. On a
+# GCE VM both authenticate as the attached service account (chessalive-runtime@…) through the
+# metadata server, so there is no key to install and `gcloud auth list` shows it with no login.
+# The GCE image already carries the packages.cloud.google.com apt source (google-cloud.list); if
+# a box lacks it, it is added with Google's published signing key.
+BUILD_BACKEND="${CHESSALIVE_BUILD_BACKEND:-cloudbuild}"
+case "${BUILD_BACKEND}" in cloudbuild|local) ;; *) die "CHESSALIVE_BUILD_BACKEND must be cloudbuild or local (got '${BUILD_BACKEND}')";; esac
+if [[ "${BUILD_BACKEND}" == "cloudbuild" ]]; then
+  if ! command -v gcloud >/dev/null 2>&1 || ! command -v gsutil >/dev/null 2>&1; then
+    if ! grep -rqs 'packages.cloud.google.com/apt cloud-sdk' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
+      curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+        | gpg --dearmor --yes -o /usr/share/keyrings/cloud.google.gpg
+      echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+        > /etc/apt/sources.list.d/google-cloud-sdk.list
+      apt-get update -qq
+    fi
+    apt-get install -y -qq --no-install-recommends google-cloud-cli >/dev/null \
+      || die "google-cloud-cli did not install (apt source packages.cloud.google.com/apt cloud-sdk)"
+  fi
+  ok "$(gcloud --version 2>/dev/null | head -1) · gsutil $(gsutil version 2>/dev/null | awk '{print $3}')"
+else
+  ok "google-cloud-cli skipped (CHESSALIVE_BUILD_BACKEND=local)"
+fi
+
+# The micro has ~3 GB of disk to spare and apt's download cache is dead weight once installed
+# (346 MB after the first run). Every install step above is done by now.
+apt-get clean
+ok "apt cache cleaned ($(df -h --output=avail / | tail -1 | tr -d ' ') free on /)"
 
 # ── 3. Java 21 (Temurin) ─────────────────────────────────────────────────────────────────────────
 # Debian 12 ships OpenJDK 17 only; Jenkins LTS 2.5xx wants 17 or 21 and 21 is the one that gets
@@ -348,7 +394,24 @@ fi
 [[ -d "${JENKINS_HOME}/plugins/workflow-job" ]] || die "workflow-job did not load; the pipeline jobs cannot be installed"
 ok "no plugin or init errors in the log"
 
-# ── 8. Jobs + toolchain shim ─────────────────────────────────────────────────────────────────────
+# ── 8. Build backend, jobs + toolchain shim ──────────────────────────────────────────────────────
+# ${JENKINS_HOME}/.jenkins/build-backend is what Jenkinsfile.release reads (as ${HOME}/.jenkins/
+# build-backend for the jenkins user) when its BUILD_BACKEND parameter is auto, and what
+# lib/install-jobs.sh reads to decide whether the release job is written enabled. It is the one
+# switch between "this box builds" and "Cloud Build builds, this box deploys".
+bold "Build backend"
+BACKEND_FILE="${JENKINS_HOME}/.jenkins/build-backend"
+install -d -m 0755 -o "${CI_USER}" -g "${CI_USER}" "${JENKINS_HOME}/.jenkins"
+if [[ "${BUILD_BACKEND}" == "cloudbuild" ]]; then
+  printf 'cloudbuild\n' > "${BACKEND_FILE}.new"
+  chown "${CI_USER}:${CI_USER}" "${BACKEND_FILE}.new"; chmod 0644 "${BACKEND_FILE}.new"
+  mv "${BACKEND_FILE}.new" "${BACKEND_FILE}"
+  ok "${BACKEND_FILE} = cloudbuild (the release lane builds on Google Cloud Build)"
+else
+  rm -f "${BACKEND_FILE}"
+  ok "${BACKEND_FILE} removed (the release lane builds on this box — needs DISABLE_JOBS=no and the RAM for it)"
+fi
+
 bold "Jobs"
 JENKINS_HOME="${JENKINS_HOME}" DISABLE_JOBS="${DISABLE_JOBS}" \
   REPO_URL="${REPO_URL:-git@github.com:ChessAlive/ChessAlive.git}" BRANCH="${BRANCH:-main}" \
@@ -362,6 +425,8 @@ $(printf '\033[1mDone.\033[0m') Jenkins ${JENKINS_VERSION} at ${JENKINS_URL} on 
   SSH for the jenkins user (GitHub deploy key + OCI host):  sudo ${REPO_DIR}/lib/ci-user-keys.sh
   chessalive-content is enabled but MANUAL (no SCM trigger — the owner wants no automatic publishing):
     infra/gcp/ci-vm.sh kick chessalive-content [DRY_RUN=true] → read the plan → ci-vm.sh approve chessalive-content
-  dev/release/config $( [[ "${DISABLE_JOBS}" == "yes" ]] && echo "DISABLED (${MEM_MB} MB RAM cannot run a build — they stay on the workstation Jenkins; resize, then re-run with DISABLE_JOBS=no)" || echo "enabled" ).
+  chessalive-release $( [[ "${BUILD_BACKEND}" == "cloudbuild" ]] && echo "ENABLED, builds on Google Cloud Build (free tier: 120 build-minutes/day, ~35 per release); this box fetches + deploys:
+    infra/gcp/ci-vm.sh kick chessalive-release [REQUIRE_APPROVAL=true] [SKIP_WEB=true] → ci-vm.sh approve chessalive-release" || ( [[ "${DISABLE_JOBS}" == "yes" ]] && echo "DISABLED (local backend, ${MEM_MB} MB RAM)" || echo "enabled (local backend)" ) ).
+  dev/config $( [[ "${DISABLE_JOBS}" == "yes" ]] && echo "DISABLED (${MEM_MB} MB RAM cannot run a build — they stay on the workstation Jenkins; resize, then re-run with DISABLE_JOBS=no)" || echo "enabled" ).
   Heap is ${HEAP}; after a resize re-run with CHESSALIVE_JENKINS_HEAP=2g.
 EOT
