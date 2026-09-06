@@ -148,7 +148,7 @@ function startBuild() {
   state.release.runId += 1; state.release.status = "running"; state.release.startedAt = new Date().toISOString(); state.release.finishedAt = null; state.release.exitCode = null; state.release.log = `Starting full release #${state.release.runId} from ${sourceDir}\n`; state.release.steps = stepTemplate(); setStep("prepare", "running");
   const child = spawn("bash", ["./release/local-release.sh"], {
     cwd: root,
-    env: { ...process.env, SOURCE_DIR: sourceDir, LOCAL_DEPLOY: "yes", PUBLIC_URL: productionUrl, SKIP_INSTALL: "no", SKIP_TESTS: "no", SKIP_FULL_TESTS: process.env.BUILD_SKIP_FULL_TESTS || "no", SKIP_WEB_SETUP: "no", SKIP_BUDGETS: "no", SKIP_ASSETS: "yes", SKIP_CONTENT: "yes", SKIP_DEPLOY: "no" },
+    env: { ...process.env, SOURCE_DIR: sourceDir, LOCAL_DEPLOY: "yes", PUBLIC_URL: productionUrl, SKIP_INSTALL: "no", SKIP_TESTS: "no", SKIP_FULL_TESTS: process.env.BUILD_SKIP_FULL_TESTS || "no", SKIP_WEB_SETUP: "yes", SKIP_BUDGETS: "no", SKIP_ASSETS: "yes", SKIP_CONTENT: "yes", SKIP_DEPLOY: "no" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   state.release.child = child;
