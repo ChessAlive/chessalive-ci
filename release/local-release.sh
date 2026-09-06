@@ -47,7 +47,7 @@ fi
 
 if [[ "${SKIP_TESTS}" != yes ]]; then
   run npm run typecheck
-  run npm run lint
+  run npx eslint apps/player-app/src apps/go-server packages --no-error-on-unmatched-pattern
   run npm run test
   run npm run test:infra
   run npm run check:production-audit
