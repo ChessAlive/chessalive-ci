@@ -15,6 +15,7 @@ ROOT_DIR="${SOURCE_DIR}"
 cd "${SOURCE_DIR}"
 
 SKIP_TESTS="${SKIP_TESTS:-no}"
+SKIP_FULL_TESTS="${SKIP_FULL_TESTS:-no}"
 SKIP_WEB="${SKIP_WEB:-no}"
 SKIP_ASSETS="${SKIP_ASSETS:-yes}"
 SKIP_CONTENT="${SKIP_CONTENT:-yes}"
@@ -48,7 +49,11 @@ fi
 if [[ "${SKIP_TESTS}" != yes ]]; then
   run npm run typecheck
   run npx eslint apps/player-app/src apps/go-server packages --no-error-on-unmatched-pattern
-  run npm run test
+  if [[ "${SKIP_FULL_TESTS}" == yes ]]; then
+    say 'Full Vitest suite skipped (SKIP_FULL_TESTS=yes); typecheck and scoped lint remain enabled'
+  else
+    run npm run test
+  fi
   run npm run test:infra
   run npm run check:production-audit
   run npm run check:narration-coverage
