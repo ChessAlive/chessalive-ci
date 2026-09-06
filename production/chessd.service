@@ -1,0 +1,55 @@
+# ChessAlive realtime server (chessd) — OCI A1 production unit.
+#
+# Install:
+#   sudo cp infra/oci/chessd.service /etc/systemd/system/chessd.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now chessd
+#
+# The binary is installed by infra/oci/deploy-chessd.sh; the environment file is materialized
+# from OCI Vault by /usr/local/bin/chessalive-pull-secrets.sh — never edit /etc/chessalive.env
+# by hand, or the next Vault pull silently reverts you.
+
+[Unit]
+Description=ChessAlive realtime server (chessd)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=chessalive
+Group=chessalive
+# Keep Go's soft heap target below MemoryHigh so GC has room to work before systemd starts
+# reclaim pressure. /etc/chessalive.env may override this default for a measured host-specific
+# value without editing the unit.
+Environment=GOMEMLIMIT=5GiB
+# Production hardening switch. chessd gates several fail-closed behaviours on NODE_ENV=production:
+# the session-secret strength check (internal/security), the strict WS/CORS origin policy, and the
+# refusal to preview OTP codes. The OCI Vault env file does NOT set this, so pin it in the unit
+# (the GCP box does the same in infra/gcp/deploy-vm.sh) — otherwise those checks silently relax.
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/chessalive.env
+ExecStart=/opt/chessalive/bin/chessd
+WorkingDirectory=/opt/chessalive
+Restart=always
+RestartSec=2
+
+# The GCP box wedged twice because nothing bounded memory and Restart=always fed the thrash.
+# 24GB available; cap well under it so a runaway is killed and restarted instead of taking the
+# whole machine down with it.
+MemoryMax=8G
+MemoryHigh=6G
+OOMPolicy=stop
+
+# Least privilege: the service only needs its own data dir.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/chessalive/data
+
+# Bind :80 as a non-root user.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

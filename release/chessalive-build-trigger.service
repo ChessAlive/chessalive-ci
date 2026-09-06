@@ -1,0 +1,17 @@
+[Unit]
+Description=ChessAlive local build trigger
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=opc
+WorkingDirectory=/opt/chessalive-ci
+EnvironmentFile=-/etc/chessalive-build.env
+ExecStart=/usr/bin/node /opt/chessalive-ci/release/build-trigger.mjs
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=false
+
+[Install]
+WantedBy=multi-user.target
