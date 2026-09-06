@@ -105,7 +105,9 @@ function updateStepsFromLine(line) {
   if (/health ok/.test(line)) setStep("health", "done");
   if (/▶ Deployed/.test(line)) setStep("deploy", "done");
   if (/Local release complete/.test(line)) { for (const item of state.release.steps) if (item.status === "pending" || item.status === "running") item.status = "done"; setStep("complete", "done"); }
-  if (/✖|failed|FAILED|exit code [1-9]/.test(line)) { const current = state.release.steps.find(item => item.status === "running") || step("complete"); if (current) current.status = "failed"; }
+  // Test output contains ordinary words such as “failed” in passing test names and diagnostics.
+  // Only the release lane's explicit failure marker or non-zero process exit should fail a step.
+  if (/✖|^\s*FAILED\b|exit code [1-9]/.test(line)) { const current = state.release.steps.find(item => item.status === "running") || step("complete"); if (current) current.status = "failed"; }
 }
 
 function appendLog(chunk) {
@@ -192,8 +194,13 @@ function timeline(steps){ $('timeline').innerHTML=steps.map(step=>'<li class="'+
 function statusPill(element,level,text){ element.className='status '+level; element.innerHTML='<span class="dot"></span><span>'+text+'</span>'; }
 function render(data){ const monitor=data.monitor,prod=data.production,release=data.release; const label=monitor.level==='green'?'Production healthy':monitor.level==='orange'?'Needs attention':monitor.level==='red'?'Production down':'Checking production…'; statusPill($('globalStatus'),monitor.level,label); statusPill($('prodStatus'),monitor.level,monitor.level==='unknown'?'Checking':monitor.level); $('monitorSummary').textContent=monitor.summary+(monitor.checkedAt?' · '+formatDate(monitor.checkedAt):''); $('monitorTime').textContent=monitor.latencyMs==null?'Every 10 seconds':'Last sweep '+monitor.latencyMs+'ms'; $('checks').innerHTML=monitor.checks.map(check=>'<div class="check"><span class="check-name">'+check.path+'</span><span class="check-right '+(check.ok?'check-ok':'check-bad')+'">'+(check.ok?'✓ '+check.status:'✕ '+(check.status||'offline'))+' · '+check.latencyMs+'ms</span></div>').join('')||'<div class="small">Waiting for the first sweep…</div>'; $('version').textContent=prod.version?.displayVersion||prod.version?.version||'—'; $('deployed').textContent=formatDate(prod.builtAt); $('commit').textContent=prod.commitHash==='unknown'?'Not available':prod.commitHash.slice(0,12); $('git').href=prod.gitLink; $('commitMessage').textContent=prod.commitMessage+(prod.commitDate?' · '+formatDate(prod.commitDate):''); timeline(release.steps); $('releaseState').textContent=release.status==='running'?'Release in progress':release.status==='succeeded'?'Last release succeeded':release.status==='failed'?'Last release failed':'Ready to release'; $('release').disabled=release.status==='running'; $('release').innerHTML=release.status==='running'?'Releasing… <span class="spinner"></span>':'Release Now <span>→</span>'; $('log').textContent=release.log||'No release has run yet.'; $('admins').innerHTML=data.admins.map(email=>'<span class="admin">'+email+'</span>').join(''); statusPill($('mailStatus'),data.notifications.smtpConfigured?'green':'orange',data.notifications.smtpConfigured?'SMTP ready':'SMTP needed'); $('mailNote').textContent=data.notifications.smtpConfigured?'Notifications are enabled.':'Email delivery is not active until BUILD_SMTP_URL is configured on the Hyderabad host.'; }
 async function refresh(){ try{ const response=await fetch('/api/status',{cache:'no-store'}); if(response.ok) render(await response.json()); }catch(error){ $('monitorSummary').textContent='Console connection lost: '+error.message; } }
-$('release').addEventListener('click',async()=>{ if(!confirm('Start the full release now?'))return; $('release').disabled=true; await fetch('/api/build',{method:'POST'}); await refresh(); }); refresh(); setInterval(refresh,2000);
+$('release').addEventListener('click',async()=>{ if($('release').disabled)return; if(!confirm('Start the full release now?'))return; $('release').disabled=true; const response=await fetch('/api/build',{method:'POST'}); if(!response.ok) await refresh(); else await refresh(); }); refresh(); setInterval(refresh,2000);
 </script></body></html>`;
+
+const dashboardHtml = html
+  .replace('.release-btn:disabled{cursor:wait;opacity:.6;transform:none}', '.release-btn:disabled{cursor:wait;opacity:.6;transform:none;pointer-events:none}')
+  .replace('<section class="card"><div class="card-head"><h3>Release progress', '<section class="card release-card"><div class="card-head"><h3>Release progress')
+  .replace('.small{color:#89a6c9;font-size:12px}', '.small{color:#89a6c9;font-size:12px}.release-card{min-height:420px}');
 
 const server = createServer(async (request, response) => {
   const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
@@ -216,7 +223,7 @@ const server = createServer(async (request, response) => {
     return response.end(loginHtml);
   }
   if (!requireAuth(request, response)) return;
-  if (url.pathname === "/" && request.method === "GET") { response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }); return response.end(html); }
+  if (url.pathname === "/" && request.method === "GET") { response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }); return response.end(dashboardHtml); }
   if (url.pathname === "/api/status" && request.method === "GET") return sendJson(response, 200, publicState());
   if (url.pathname === "/api/build" && request.method === "POST") { if (!startBuild()) return sendJson(response, 409, { error: "a release is already running", ...publicState() }); return sendJson(response, 202, publicState()); }
   sendJson(response, 404, { error: "not found" });
