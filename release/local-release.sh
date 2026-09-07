@@ -14,7 +14,10 @@ SOURCE_DIR="${SOURCE_DIR:-/opt/chessalive}"
 SYNC_SOURCE="${SYNC_SOURCE:-yes}"
 SOURCE_GIT_URL="${SOURCE_GIT_URL:-${BUILD_GIT_URL:-https://github.com/ChessAlive/ChessAlive.git}}"
 SOURCE_GIT_REF="${SOURCE_GIT_REF:-main}"
+SOURCE_SSH_KEY="${SOURCE_SSH_KEY:-}"
 SOURCE_COMMIT_FILE="${SOURCE_COMMIT_FILE:-${SOURCE_DIR}/.source-commit}"
+SOURCE_COMMIT_MESSAGE_FILE="${SOURCE_COMMIT_MESSAGE_FILE:-${SOURCE_DIR}/.source-commit-message}"
+SOURCE_COMMIT_DATE_FILE="${SOURCE_COMMIT_DATE_FILE:-${SOURCE_DIR}/.source-commit-date}"
 
 sync_source_checkout() {
   command -v git >/dev/null || die 'git is required to synchronize the release checkout'
@@ -24,6 +27,10 @@ sync_source_checkout() {
   local checkout
   checkout="$(mktemp -d "${TMPDIR:-/tmp}/chessalive-source.XXXXXX")"
   say "Synchronizing ${SOURCE_GIT_URL} @ ${SOURCE_GIT_REF}"
+  if [[ -n "${SOURCE_SSH_KEY}" ]]; then
+    [[ -r "${SOURCE_SSH_KEY}" ]] || die "SOURCE_SSH_KEY is not readable: ${SOURCE_SSH_KEY}"
+    export GIT_SSH_COMMAND="ssh -i ${SOURCE_SSH_KEY} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+  fi
   git clone --quiet --depth=1 --branch "${SOURCE_GIT_REF}" "${SOURCE_GIT_URL}" "${checkout}/repo"
 
   # Keep generated dependency/build directories local, but delete stale tracked source files. This
@@ -35,6 +42,8 @@ sync_source_checkout() {
     --exclude 'apps/go-server/chessd-migrate-linux-*' \
     "${checkout}/repo/" "${SOURCE_DIR}/"
   git -C "${SOURCE_DIR}" rev-parse HEAD > "${SOURCE_COMMIT_FILE}"
+  git -C "${SOURCE_DIR}" log -1 --format=%s > "${SOURCE_COMMIT_MESSAGE_FILE}"
+  git -C "${SOURCE_DIR}" log -1 --format=%aI > "${SOURCE_COMMIT_DATE_FILE}"
   rm -rf "${checkout}"
   echo "source checkout: $(cut -c1-12 "${SOURCE_COMMIT_FILE}")"
 }

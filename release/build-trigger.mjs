@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
 
@@ -18,9 +19,12 @@ const port = Number(process.env.BUILD_TRIGGER_PORT || 8787);
 const basicPassword = process.env.BUILD_TRIGGER_TOKEN || "";
 const productionUrl = (process.env.PUBLIC_URL || "https://chessalive.com").replace(/\/$/, "");
 const gitUrl = (process.env.BUILD_GIT_URL || "https://github.com/ChessAlive/ChessAlive").replace(/\/$/, "");
-const commitHash = process.env.BUILD_COMMIT_HASH || "unknown";
-const commitMessage = process.env.BUILD_COMMIT_MESSAGE || "Current release checkout";
-const commitDate = process.env.BUILD_COMMIT_DATE || "";
+let commitHash = process.env.BUILD_COMMIT_HASH || "unknown";
+let commitMessage = process.env.BUILD_COMMIT_MESSAGE || "Current release checkout";
+let commitDate = process.env.BUILD_COMMIT_DATE || "";
+const sourceCommitFile = process.env.SOURCE_COMMIT_FILE || `${sourceDir}/.source-commit`;
+const sourceCommitMessageFile = process.env.SOURCE_COMMIT_MESSAGE_FILE || `${sourceDir}/.source-commit-message`;
+const sourceCommitDateFile = process.env.SOURCE_COMMIT_DATE_FILE || `${sourceDir}/.source-commit-date`;
 const admins = (process.env.BUILD_ADMIN_EMAILS || [
   "lakshminathanlaky@gmail.com",
   "vinoth121022@gmail.com",
@@ -50,6 +54,21 @@ const state = {
 const sessions = new Map();
 const sessionCookie = "chessalive_ci_session";
 const sessionTtlMs = 12 * 60 * 60 * 1000;
+
+function refreshCommitMetadata() {
+  try {
+    const sourceHash = readFileSync(sourceCommitFile, "utf8").trim();
+    if (/^[0-9a-f]{7,64}$/i.test(sourceHash)) commitHash = sourceHash;
+    const sourceMessage = readFileSync(sourceCommitMessageFile, "utf8").trim();
+    if (sourceMessage) commitMessage = sourceMessage;
+    const sourceDate = readFileSync(sourceCommitDateFile, "utf8").trim();
+    if (sourceDate) commitDate = sourceDate;
+  } catch {
+    // The source marker is written by the release lane after a successful source sync.
+  }
+}
+
+refreshCommitMetadata();
 
 function hash(value) { return createHash("sha256").update(String(value)).digest(); }
 function safeEqual(left, right) { return timingSafeEqual(hash(left), hash(right)); }
@@ -186,6 +205,7 @@ async function sendAdminEmail(subject, title, summary, extraHtml = "") {
 
 function startBuild() {
   if (state.release.child) return false;
+  refreshCommitMetadata();
   state.release.runId += 1; state.release.status = "running"; state.release.startedAt = new Date().toISOString(); state.release.finishedAt = null; state.release.exitCode = null; state.release.log = `Starting full release #${state.release.runId} from ${sourceDir}\n`; state.release.steps = stepTemplate(); setStep("prepare", "running");
   const child = spawn("bash", ["./release/local-release.sh"], {
     cwd: root,
@@ -195,6 +215,7 @@ function startBuild() {
   state.release.child = child;
   child.stdout.on("data", data => appendLog(data.toString())); child.stderr.on("data", data => appendLog(data.toString())); child.on("error", error => appendLog(`\nprocess error: ${error.message}\n`));
   child.on("close", code => {
+    refreshCommitMetadata();
     state.release.exitCode = code; state.release.status = code === 0 ? "succeeded" : "failed"; state.release.finishedAt = new Date().toISOString(); state.release.child = null;
     if (code === 0) { for (const item of state.release.steps) if (item.status === "pending" || item.status === "running") item.status = "done"; setStep("complete", "done"); }
     else { const current = state.release.steps.find(item => item.status === "running") || step("complete"); if (current) current.status = "failed"; }
