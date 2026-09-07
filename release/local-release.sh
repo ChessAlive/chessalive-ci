@@ -19,6 +19,9 @@ SOURCE_COMMIT_FILE="${SOURCE_COMMIT_FILE:-${SOURCE_DIR}/.source-commit}"
 SOURCE_COMMIT_MESSAGE_FILE="${SOURCE_COMMIT_MESSAGE_FILE:-${SOURCE_DIR}/.source-commit-message}"
 SOURCE_COMMIT_DATE_FILE="${SOURCE_COMMIT_DATE_FILE:-${SOURCE_DIR}/.source-commit-date}"
 
+say() { printf '\n\033[1m▶ %s\033[0m\n' "$*"; }
+die() { printf '\n\033[31m✖ %s\033[0m\n' "$*" >&2; exit 1; }
+
 sync_source_checkout() {
   command -v git >/dev/null || die 'git is required to synchronize the release checkout'
   command -v rsync >/dev/null || die 'rsync is required to synchronize the release checkout'
@@ -47,8 +50,6 @@ sync_source_checkout() {
   rm -rf "${checkout}"
   echo "source checkout: $(cut -c1-12 "${SOURCE_COMMIT_FILE}")"
 }
-
-die() { printf '\n\033[31m✖ %s\033[0m\n' "$*" >&2; exit 1; }
 
 if [[ "${SYNC_SOURCE}" == yes ]]; then
   sync_source_checkout
@@ -82,7 +83,6 @@ PUBLIC_URL="${PUBLIC_URL:-http://127.0.0.1:8080}"
 BUILD_ARCH="${BUILD_ARCH:-$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')}"
 EXPO_PUBLIC_CHESSALIVE_AUDIO_CDN_ORIGIN="${EXPO_PUBLIC_CHESSALIVE_AUDIO_CDN_ORIGIN:-https://objectstorage.ap-mumbai-1.oraclecloud.com/n/bmt2adcjgo0u/b/chessalive-audio/o}"
 
-say() { printf '\n\033[1m▶ %s\033[0m\n' "$*"; }
 run() { say "$*"; "$@"; }
 
 [[ "${LOCAL_DEPLOY}" == yes ]] || die 'local-release.sh requires LOCAL_DEPLOY=yes; it never delegates builds to Jenkins or Cloud Build'
