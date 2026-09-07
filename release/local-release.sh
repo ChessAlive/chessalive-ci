@@ -34,6 +34,20 @@ sync_source_checkout() {
     [[ -r "${SOURCE_SSH_KEY}" ]] || die "SOURCE_SSH_KEY is not readable: ${SOURCE_SSH_KEY}"
     export GIT_SSH_COMMAND="ssh -i ${SOURCE_SSH_KEY} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
   fi
+
+  if [[ -d "${SOURCE_DIR}/.git" ]]; then
+    say "Updating persistent release checkout"
+    git -C "${SOURCE_DIR}" remote set-url origin "${SOURCE_GIT_URL}" 2>/dev/null || git -C "${SOURCE_DIR}" remote add origin "${SOURCE_GIT_URL}"
+    git -C "${SOURCE_DIR}" fetch --quiet --prune --depth=1 origin "${SOURCE_GIT_REF}"
+    git -C "${SOURCE_DIR}" reset --hard --quiet "origin/${SOURCE_GIT_REF}"
+    git -C "${SOURCE_DIR}" clean -fd -e node_modules/ -e apps/player-app/dist/ -e 'apps/go-server/chessd-linux-*' -e 'apps/go-server/chessd-migrate-linux-*' >/dev/null
+    git -C "${SOURCE_DIR}" rev-parse HEAD > "${SOURCE_COMMIT_FILE}"
+    git -C "${SOURCE_DIR}" log -1 --format=%s > "${SOURCE_COMMIT_MESSAGE_FILE}"
+    git -C "${SOURCE_DIR}" log -1 --format=%aI > "${SOURCE_COMMIT_DATE_FILE}"
+    echo "source checkout: $(cut -c1-12 "${SOURCE_COMMIT_FILE}")"
+    return 0
+  fi
+
   git clone --quiet --depth=1 --branch "${SOURCE_GIT_REF}" "${SOURCE_GIT_URL}" "${checkout}/repo"
 
   # Keep generated dependency/build directories local, but delete stale tracked source files. This
