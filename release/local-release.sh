@@ -43,7 +43,10 @@ command -v go >/dev/null || die 'go is required'
 command -v file >/dev/null || die 'file is required'
 
 if [[ "${SKIP_INSTALL}" != yes ]]; then
-  run npm ci
+  # The service also loads the production runtime environment so the built server matches Mumbai.
+  # npm treats NODE_ENV=production as a request to omit devDependencies, but the release gate
+  # itself needs TypeScript, ESLint, Vitest, Expo, and the build tooling. Explicitly include them.
+  run npm ci --include=dev
 fi
 
 if [[ "${SKIP_TESTS}" != yes ]]; then
