@@ -46,8 +46,9 @@ sudo systemctl enable --now chessalive-build-trigger
 
 Set the secret values only in `/etc/chessalive-build.env`, never in Git. At minimum configure
 `BUILD_TRIGGER_TOKEN`, `SOURCE_DIR=/opt/chessalive`, the Mumbai SSH values, and
-`BUILD_ADMIN_EMAILS`. `BUILD_SMTP_URL` is required before release or monitoring mail can be
-delivered.
+`BUILD_ADMIN_EMAILS`. Release and monitoring mail reuse the original ChessAlive Resend credentials
+(`CHESSALIVE_RESEND_API_KEY` and `CHESSALIVE_OTP_FROM`) loaded from `/etc/chessalive.env` on
+Hyderabad. SMTP remains an optional fallback through `BUILD_SMTP_URL`.
 
 Open `http://<hyderabad-public-ip>:8787/`. The console displays an in-page password screen; no
 browser username/password alert is used. Enter `BUILD_TRIGGER_TOKEN` and the console creates a
