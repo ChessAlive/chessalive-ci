@@ -14,6 +14,7 @@ SOURCE_DIR="${SOURCE_DIR:-/opt/chessalive}"
 SYNC_SOURCE="${SYNC_SOURCE:-yes}"
 SOURCE_GIT_URL="${SOURCE_GIT_URL:-${BUILD_GIT_URL:-https://github.com/ChessAlive/ChessAlive.git}}"
 SOURCE_GIT_REF="${SOURCE_GIT_REF:-main}"
+SOURCE_COMMIT_FILE="${SOURCE_COMMIT_FILE:-${SOURCE_DIR}/.source-commit}"
 
 sync_source_checkout() {
   command -v git >/dev/null || die 'git is required to synchronize the release checkout'
@@ -33,14 +34,22 @@ sync_source_checkout() {
     --exclude 'apps/go-server/chessd-linux-*' \
     --exclude 'apps/go-server/chessd-migrate-linux-*' \
     "${checkout}/repo/" "${SOURCE_DIR}/"
+  git -C "${SOURCE_DIR}" rev-parse HEAD > "${SOURCE_COMMIT_FILE}"
   rm -rf "${checkout}"
-  echo "source checkout: $(git -C "${SOURCE_DIR}" rev-parse --short HEAD)"
+  echo "source checkout: $(cut -c1-12 "${SOURCE_COMMIT_FILE}")"
 }
 
 die() { printf '\n\033[31m✖ %s\033[0m\n' "$*" >&2; exit 1; }
 
 if [[ "${SYNC_SOURCE}" == yes ]]; then
   sync_source_checkout
+else
+  [[ -s "${SOURCE_COMMIT_FILE}" ]] || die "${SOURCE_COMMIT_FILE} is missing; refusing to build an unverified checkout"
+  source_commit="$(tr -d '[:space:]' < "${SOURCE_COMMIT_FILE}")"
+  if [[ -n "${BUILD_COMMIT_HASH:-}" && "${BUILD_COMMIT_HASH}" != unknown && "${source_commit}" != "${BUILD_COMMIT_HASH}" ]]; then
+    die "source checkout ${source_commit:0:12} does not match BUILD_COMMIT_HASH ${BUILD_COMMIT_HASH:0:12}; refusing stale release"
+  fi
+  echo "verified source checkout: ${source_commit:0:12}"
 fi
 
 ROOT_DIR="${SOURCE_DIR}"
