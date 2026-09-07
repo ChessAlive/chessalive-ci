@@ -11,6 +11,38 @@ set -euo pipefail
 
 CI_ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE_DIR="${SOURCE_DIR:-/opt/chessalive}"
+SYNC_SOURCE="${SYNC_SOURCE:-yes}"
+SOURCE_GIT_URL="${SOURCE_GIT_URL:-${BUILD_GIT_URL:-https://github.com/ChessAlive/ChessAlive.git}}"
+SOURCE_GIT_REF="${SOURCE_GIT_REF:-main}"
+
+sync_source_checkout() {
+  command -v git >/dev/null || die 'git is required to synchronize the release checkout'
+  command -v rsync >/dev/null || die 'rsync is required to synchronize the release checkout'
+  [[ -n "${SOURCE_GIT_URL}" ]] || die 'SOURCE_GIT_URL is empty; cannot synchronize the release checkout'
+
+  local checkout
+  checkout="$(mktemp -d "${TMPDIR:-/tmp}/chessalive-source.XXXXXX")"
+  say "Synchronizing ${SOURCE_GIT_URL} @ ${SOURCE_GIT_REF}"
+  git clone --quiet --depth=1 --branch "${SOURCE_GIT_REF}" "${SOURCE_GIT_URL}" "${checkout}/repo"
+
+  # Keep generated dependency/build directories local, but delete stale tracked source files. This
+  # prevents an old admin/release file from surviving after it is removed from the GitHub checkout.
+  rsync -a --delete \
+    --exclude node_modules/ \
+    --exclude apps/player-app/dist/ \
+    --exclude 'apps/go-server/chessd-linux-*' \
+    --exclude 'apps/go-server/chessd-migrate-linux-*' \
+    "${checkout}/repo/" "${SOURCE_DIR}/"
+  rm -rf "${checkout}"
+  echo "source checkout: $(git -C "${SOURCE_DIR}" rev-parse --short HEAD)"
+}
+
+die() { printf '\n\033[31m✖ %s\033[0m\n' "$*" >&2; exit 1; }
+
+if [[ "${SYNC_SOURCE}" == yes ]]; then
+  sync_source_checkout
+fi
+
 ROOT_DIR="${SOURCE_DIR}"
 cd "${SOURCE_DIR}"
 
@@ -33,7 +65,6 @@ BUILD_ARCH="${BUILD_ARCH:-$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')}
 EXPO_PUBLIC_CHESSALIVE_AUDIO_CDN_ORIGIN="${EXPO_PUBLIC_CHESSALIVE_AUDIO_CDN_ORIGIN:-https://objectstorage.ap-mumbai-1.oraclecloud.com/n/bmt2adcjgo0u/b/chessalive-audio/o}"
 
 say() { printf '\n\033[1m▶ %s\033[0m\n' "$*"; }
-die() { printf '\n\033[31m✖ %s\033[0m\n' "$*" >&2; exit 1; }
 run() { say "$*"; "$@"; }
 
 [[ "${LOCAL_DEPLOY}" == yes ]] || die 'local-release.sh requires LOCAL_DEPLOY=yes; it never delegates builds to Jenkins or Cloud Build'
