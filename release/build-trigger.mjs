@@ -138,9 +138,31 @@ function releaseStepsHtml() {
   return state.release.steps.map(item => `<li><strong>${item.status === "done" ? "✓" : item.status === "failed" ? "!" : "•"} ${item.label}</strong><span>${item.detail}</span></li>`).join("");
 }
 
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>\"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[character]);
+}
+
+function releaseCommitHtml(succeeded) {
+  const hash = commitHash !== "unknown" ? commitHash : "Source commit unavailable";
+  const hashText = escapeHtml(hash.slice(0, 12));
+  const commitLink = commitHash !== "unknown"
+    ? `<a href="${escapeHtml(`${gitUrl}/commit/${commitHash}`)}" style="color:#8cc2ff">${hashText}</a>`
+    : hashText;
+  const message = escapeHtml(commitMessage);
+  const date = commitDate ? `<br>Committed: ${escapeHtml(commitDate)}` : "";
+  return `<li><strong>${succeeded ? "Commit deployed" : "Commit attempted"}</strong><span>${commitLink} — ${message}${date}</span></li>`;
+}
+
+function releaseCommitSummary() {
+  if (commitHash === "unknown") return "Source commit metadata is unavailable.";
+  return `Commit ${commitHash} — ${commitMessage}${commitDate ? ` (${commitDate})` : ""}.`;
+}
+
 async function sendAdminEmail(subject, title, summary, extraHtml = "") {
   try {
-    const html = `<!doctype html><html><body style="margin:0;background:#08111f;font-family:Arial,sans-serif;color:#eaf1ff"><div style="max-width:680px;margin:24px auto;padding:30px;background:#111e33;border:1px solid #29415f;border-radius:18px"><div style="font-size:13px;letter-spacing:2px;color:#6ea8ff">CHESSALIVE RELEASE CONSOLE</div><h1 style="margin:14px 0 8px;color:#fff">${title}</h1><p style="color:#b8c9e5;line-height:1.6">${summary}</p><ul style="padding-left:20px;line-height:1.9">${extraHtml || releaseStepsHtml()}</ul><p style="margin-top:24px"><a href="${productionUrl}" style="color:#8cc2ff">Open production</a></p></div></body></html>`;
+    const safeTitle = escapeHtml(title);
+    const safeSummary = escapeHtml(summary).replaceAll("\n", "<br>");
+    const html = `<!doctype html><html><body style="margin:0;background:#08111f;font-family:Arial,sans-serif;color:#eaf1ff"><div style="max-width:680px;margin:24px auto;padding:30px;background:#111e33;border:1px solid #29415f;border-radius:18px"><div style="font-size:13px;letter-spacing:2px;color:#6ea8ff">CHESSALIVE RELEASE CONSOLE</div><h1 style="margin:14px 0 8px;color:#fff">${safeTitle}</h1><p style="color:#b8c9e5;line-height:1.6">${safeSummary}</p><ul style="padding-left:20px;line-height:1.9">${extraHtml || releaseStepsHtml()}</ul><p style="margin-top:24px"><a href="${escapeHtml(productionUrl)}" style="color:#8cc2ff">Open production</a></p></div></body></html>`;
     const text = `${title}\n\n${summary}\n\n${productionUrl}`;
     if (resendApiKey) {
       const response = await fetch("https://api.resend.com/emails", {
@@ -177,7 +199,7 @@ function startBuild() {
     if (code === 0) { for (const item of state.release.steps) if (item.status === "pending" || item.status === "running") item.status = "done"; setStep("complete", "done"); }
     else { const current = state.release.steps.find(item => item.status === "running") || step("complete"); if (current) current.status = "failed"; }
     appendLog(`\nFinished with exit code ${code ?? "unknown"}.\n`);
-    void sendAdminEmail(code === 0 ? `ChessAlive release #${state.release.runId} deployed` : `ChessAlive release #${state.release.runId} failed`, code === 0 ? "Release deployed successfully" : "Release needs attention", code === 0 ? "The full code release completed and the Mumbai production service passed its health gate." : `The full code release stopped with exit code ${code ?? "unknown"}. Review the release timeline and log in the console.`);
+    void sendAdminEmail(code === 0 ? `ChessAlive release #${state.release.runId} deployed` : `ChessAlive release #${state.release.runId} failed`, code === 0 ? "Release deployed successfully" : "Release needs attention", code === 0 ? `The requested source commit is live on Mumbai production. ${releaseCommitSummary()}` : `The release did not complete, so the requested source commit was not deployed. Exit code: ${code ?? "unknown"}. ${releaseCommitSummary()}`, releaseCommitHtml(code === 0));
   });
   return true;
 }
