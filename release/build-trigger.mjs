@@ -8,7 +8,7 @@ let nodemailer = null;
 try {
   nodemailer = (await import("nodemailer")).default;
 } catch {
-  // The console remains usable without SMTP; notifications are marked unavailable in the UI.
+  // SMTP is optional; the original ChessAlive mail path uses Resend's HTTPS API.
 }
 
 const root = resolve(import.meta.dirname, "..");
@@ -28,6 +28,8 @@ const admins = (process.env.BUILD_ADMIN_EMAILS || [
 ].join(",")).split(",").map(value => value.trim()).filter(Boolean);
 const smtpUrl = process.env.BUILD_SMTP_URL || "";
 const smtpFrom = process.env.BUILD_SMTP_FROM || "ChessAlive Releases <no-reply@chessalive.com>";
+const resendApiKey = process.env.CHESSALIVE_RESEND_API_KEY || "";
+const resendFrom = process.env.CHESSALIVE_OTP_FROM || smtpFrom;
 const monitorPaths = (process.env.MONITOR_PATHS || "/,/health,/version,/play,/tactics,/coach")
   .split(",").map(value => value.trim()).filter(Boolean);
 const maxLogBytes = 120_000;
@@ -122,7 +124,13 @@ function publicState() {
     production: { url: productionUrl, version: production.version || null, builtAt: production.builtAt || null, commitHash, commitMessage, commitDate, gitLink: commitHash !== "unknown" ? `${gitUrl}/commit/${commitHash}` : gitUrl },
     monitor: { level: state.monitor.level, checkedAt: state.monitor.checkedAt, latencyMs: state.monitor.latencyMs, summary: state.monitor.summary, checks: state.monitor.checks },
     admins,
-    notifications: { smtpConfigured: Boolean(smtpUrl && nodemailer), smtpAvailable: Boolean(nodemailer) },
+    notifications: {
+      configured: Boolean(resendApiKey || (smtpUrl && nodemailer)),
+      provider: resendApiKey ? "Resend" : (smtpUrl && nodemailer ? "SMTP" : null),
+      resendConfigured: Boolean(resendApiKey),
+      smtpConfigured: Boolean(smtpUrl && nodemailer),
+      smtpAvailable: Boolean(nodemailer),
+    },
   };
 }
 
@@ -131,15 +139,26 @@ function releaseStepsHtml() {
 }
 
 async function sendAdminEmail(subject, title, summary, extraHtml = "") {
-  if (!smtpUrl || !nodemailer) { appendLog("[notify] SMTP is not configured; admin email was not sent.\n"); return false; }
   try {
+    const html = `<!doctype html><html><body style="margin:0;background:#08111f;font-family:Arial,sans-serif;color:#eaf1ff"><div style="max-width:680px;margin:24px auto;padding:30px;background:#111e33;border:1px solid #29415f;border-radius:18px"><div style="font-size:13px;letter-spacing:2px;color:#6ea8ff">CHESSALIVE RELEASE CONSOLE</div><h1 style="margin:14px 0 8px;color:#fff">${title}</h1><p style="color:#b8c9e5;line-height:1.6">${summary}</p><ul style="padding-left:20px;line-height:1.9">${extraHtml || releaseStepsHtml()}</ul><p style="margin-top:24px"><a href="${productionUrl}" style="color:#8cc2ff">Open production</a></p></div></body></html>`;
+    const text = `${title}\n\n${summary}\n\n${productionUrl}`;
+    if (resendApiKey) {
+      const response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        signal: AbortSignal.timeout(10_000),
+        headers: { Authorization: `Bearer ${resendApiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ from: resendFrom, to: admins, subject, html, text }),
+      });
+      if (!response.ok) throw new Error(`Resend ${response.status}: ${(await response.text()).slice(0, 240)}`);
+      appendLog(`[notify] Admin email sent via Resend to ${admins.length} recipients.\n`); return true;
+    }
+    if (!smtpUrl || !nodemailer) { appendLog("[notify] No email provider is configured; admin email was not sent.\n"); return false; }
     const transporter = nodemailer.createTransport(smtpUrl);
     await transporter.sendMail({
       from: smtpFrom, to: admins.join(","), subject,
-      text: `${title}\n\n${summary}\n\n${productionUrl}`,
-      html: `<!doctype html><html><body style="margin:0;background:#08111f;font-family:Arial,sans-serif;color:#eaf1ff"><div style="max-width:680px;margin:24px auto;padding:30px;background:#111e33;border:1px solid #29415f;border-radius:18px"><div style="font-size:13px;letter-spacing:2px;color:#6ea8ff">CHESSALIVE RELEASE CONSOLE</div><h1 style="margin:14px 0 8px;color:#fff">${title}</h1><p style="color:#b8c9e5;line-height:1.6">${summary}</p><ul style="padding-left:20px;line-height:1.9">${extraHtml || releaseStepsHtml()}</ul><p style="margin-top:24px"><a href="${productionUrl}" style="color:#8cc2ff">Open production</a></p></div></body></html>`,
+      text, html,
     });
-    appendLog(`[notify] Admin email sent to ${admins.length} recipients.\n`); return true;
+    appendLog(`[notify] Admin email sent via SMTP to ${admins.length} recipients.\n`); return true;
   } catch (error) { appendLog(`[notify] Admin email failed: ${error.message}\n`); return false; }
 }
 
@@ -192,7 +211,7 @@ const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta n
 const $ = id => document.getElementById(id); const formatDate = value => value ? new Date(value).toLocaleString() : '—'; const icon = status => status === 'done' ? '✓' : status === 'failed' ? '!' : status === 'running' ? '<span class="spinner"></span>' : '•';
 function timeline(steps){ $('timeline').innerHTML=steps.map(step=>'<li class="'+step.status+'"><div class="icon">'+icon(step.status)+'</div><div><strong>'+step.label+'</strong><span>'+step.detail+'</span></div></li>').join(''); }
 function statusPill(element,level,text){ element.className='status '+level; element.innerHTML='<span class="dot"></span><span>'+text+'</span>'; }
-function render(data){ const monitor=data.monitor,prod=data.production,release=data.release; const label=monitor.level==='green'?'Production healthy':monitor.level==='orange'?'Needs attention':monitor.level==='red'?'Production down':'Checking production…'; statusPill($('globalStatus'),monitor.level,label); statusPill($('prodStatus'),monitor.level,monitor.level==='unknown'?'Checking':monitor.level); $('monitorSummary').textContent=monitor.summary+(monitor.checkedAt?' · '+formatDate(monitor.checkedAt):''); $('monitorTime').textContent=monitor.latencyMs==null?'Every 10 seconds':'Last sweep '+monitor.latencyMs+'ms'; $('checks').innerHTML=monitor.checks.map(check=>'<div class="check"><span class="check-name">'+check.path+'</span><span class="check-right '+(check.ok?'check-ok':'check-bad')+'">'+(check.ok?'✓ '+check.status:'✕ '+(check.status||'offline'))+' · '+check.latencyMs+'ms</span></div>').join('')||'<div class="small">Waiting for the first sweep…</div>'; $('version').textContent=prod.version?.displayVersion||prod.version?.version||'—'; $('deployed').textContent=formatDate(prod.builtAt); $('commit').textContent=prod.commitHash==='unknown'?'Not available':prod.commitHash.slice(0,12); $('git').href=prod.gitLink; $('commitMessage').textContent=prod.commitMessage+(prod.commitDate?' · '+formatDate(prod.commitDate):''); timeline(release.steps); $('releaseState').textContent=release.status==='running'?'Release in progress':release.status==='succeeded'?'Last release succeeded':release.status==='failed'?'Last release failed':'Ready to release'; $('release').disabled=release.status==='running'; $('release').innerHTML=release.status==='running'?'Releasing… <span class="spinner"></span>':'Release Now <span>→</span>'; $('log').textContent=release.log||'No release has run yet.'; $('admins').innerHTML=data.admins.map(email=>'<span class="admin">'+email+'</span>').join(''); statusPill($('mailStatus'),data.notifications.smtpConfigured?'green':'orange',data.notifications.smtpConfigured?'SMTP ready':'SMTP needed'); $('mailNote').textContent=data.notifications.smtpConfigured?'Notifications are enabled.':'Email delivery is not active until BUILD_SMTP_URL is configured on the Hyderabad host.'; }
+function render(data){ const monitor=data.monitor,prod=data.production,release=data.release; const label=monitor.level==='green'?'Production healthy':monitor.level==='orange'?'Needs attention':monitor.level==='red'?'Production down':'Checking production…'; statusPill($('globalStatus'),monitor.level,label); statusPill($('prodStatus'),monitor.level,monitor.level==='unknown'?'Checking':monitor.level); $('monitorSummary').textContent=monitor.summary+(monitor.checkedAt?' · '+formatDate(monitor.checkedAt):''); $('monitorTime').textContent=monitor.latencyMs==null?'Every 10 seconds':'Last sweep '+monitor.latencyMs+'ms'; $('checks').innerHTML=monitor.checks.map(check=>'<div class="check"><span class="check-name">'+check.path+'</span><span class="check-right '+(check.ok?'check-ok':'check-bad')+'">'+(check.ok?'✓ '+check.status:'✕ '+(check.status||'offline'))+' · '+check.latencyMs+'ms</span></div>').join('')||'<div class="small">Waiting for the first sweep…</div>'; $('version').textContent=prod.version?.displayVersion||prod.version?.version||'—'; $('deployed').textContent=formatDate(prod.builtAt); $('commit').textContent=prod.commitHash==='unknown'?'Not available':prod.commitHash.slice(0,12); $('git').href=prod.gitLink; $('commitMessage').textContent=prod.commitMessage+(prod.commitDate?' · '+formatDate(prod.commitDate):''); timeline(release.steps); $('releaseState').textContent=release.status==='running'?'Release in progress':release.status==='succeeded'?'Last release succeeded':release.status==='failed'?'Last release failed':'Ready to release'; $('release').disabled=release.status==='running'; $('release').innerHTML=release.status==='running'?'Releasing… <span class="spinner"></span>':'Release Now <span>→</span>'; $('log').textContent=release.log||'No release has run yet.'; $('admins').innerHTML=data.admins.map(email=>'<span class="admin">'+email+'</span>').join(''); const mailReady=data.notifications.configured; statusPill($('mailStatus'),mailReady?'green':'orange',mailReady?(data.notifications.provider+' ready'):'Email needed'); $('mailNote').textContent=mailReady?(data.notifications.provider+' notifications are enabled.'):'Email delivery is not active until the original Resend credentials or BUILD_SMTP_URL are configured on the Hyderabad host.'; }
 async function refresh(){ try{ const response=await fetch('/api/status',{cache:'no-store'}); if(response.ok) render(await response.json()); }catch(error){ $('monitorSummary').textContent='Console connection lost: '+error.message; } }
 $('release').addEventListener('click',async()=>{ if($('release').disabled)return; if(!confirm('Start the full release now?'))return; $('release').disabled=true; const response=await fetch('/api/build',{method:'POST'}); if(!response.ok) await refresh(); else await refresh(); }); refresh(); setInterval(refresh,2000);
 </script></body></html>`;

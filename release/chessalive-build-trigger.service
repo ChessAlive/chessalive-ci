@@ -8,6 +8,7 @@ Type=simple
 User=opc
 WorkingDirectory=/opt/chessalive-ci
 EnvironmentFile=-/etc/chessalive-build.env
+EnvironmentFile=-/etc/chessalive.env
 ExecStart=/usr/bin/node /opt/chessalive-ci/release/build-trigger.mjs
 Restart=on-failure
 RestartSec=5
