@@ -50,8 +50,9 @@ Open `http://<instance-public-ip>:8787/` from the allowed network and enter the 
 OCI security list must allow TCP `8787` from the intended source IPs; do not open the build port to
 the whole internet. The console uses an in-page password form and no browser username/password
 alert. The token is never stored in the repository or in browser storage. Release status refreshes
-every 2 seconds; production is checked every 10 seconds
-and transition alerts reuse the original ChessAlive Resend credentials from `/etc/chessalive.env`
+every 2 seconds; production is checked once an hour. Monitoring sends one email with the exact
+failing endpoints per incident and does not send recovery emails. Alerts reuse the original
+ChessAlive Resend credentials from `/etc/chessalive.env`
 (`CHESSALIVE_RESEND_API_KEY` and `CHESSALIVE_OTP_FROM`) together with `BUILD_ADMIN_EMAILS`.
 SMTP through `BUILD_SMTP_URL` remains an optional fallback.
 
