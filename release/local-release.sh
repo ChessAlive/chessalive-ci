@@ -50,11 +50,13 @@ sync_source_checkout() {
 
   git clone --quiet --depth=1 --branch "${SOURCE_GIT_REF}" "${SOURCE_GIT_URL}" "${checkout}/repo"
 
-  # Keep generated dependency/build directories local, but delete stale tracked source files. This
-  # prevents an old admin/release file from surviving after it is removed from the GitHub checkout.
+  # Keep generated dependencies, build output, and content-addressed image cache local, but delete
+  # stale tracked source files. The cache survives normal git clean (it is ignored), and must also
+  # survive this rsync fallback when the checkout has to be recreated.
   rsync -a --delete \
     --exclude node_modules/ \
     --exclude apps/player-app/dist/ \
+    --exclude '/.cache/squoosh-webp-v1/' \
     --exclude 'apps/go-server/chessd-linux-*' \
     --exclude 'apps/go-server/chessd-migrate-linux-*' \
     "${checkout}/repo/" "${SOURCE_DIR}/"

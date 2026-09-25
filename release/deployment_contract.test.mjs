@@ -1,6 +1,9 @@
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { createMonitorIssueReport, MONITOR_INTERVAL_MS, nextMonitorIncidentState } from "./monitor-policy.mjs";
 
@@ -8,6 +11,39 @@ const root = new URL("../", import.meta.url);
 const unit = readFileSync(new URL("production/chessd.service", root), "utf8");
 const deploy = readFileSync(new URL("release/deploy-chessd.sh", root), "utf8");
 const buildTrigger = readFileSync(new URL("release/build-trigger.mjs", root), "utf8");
+const localRelease = readFileSync(new URL("release/local-release.sh", root), "utf8");
+
+test("source sync fallback preserves the image cache while deleting stale files", (t) => {
+  if (spawnSync("rsync", ["--version"]).error?.code === "ENOENT") {
+    t.skip("rsync is unavailable on this test host");
+    return;
+  }
+
+  const fallback = localRelease.match(/rsync -a --delete \\\n([\s\S]*?)"\$\{checkout\}\/repo\/" "\$\{SOURCE_DIR\}\/"/);
+  assert.ok(fallback, "source sync fallback command must be present");
+  const excludes = [...fallback[1].matchAll(/--exclude (?:'([^']+)'|([^\s\\]+))/g)]
+    .flatMap(([, quoted, unquoted]) => ["--exclude", quoted || unquoted]);
+
+  const scratch = mkdtempSync(join(tmpdir(), "chessalive-sync-cache-"));
+  try {
+    const source = join(scratch, "source");
+    const destination = join(scratch, "destination");
+    const cache = join(destination, ".cache/squoosh-webp-v1");
+    mkdirSync(source);
+    mkdirSync(cache, { recursive: true });
+    writeFileSync(join(cache, "cached.webp"), "compressed-once");
+    writeFileSync(join(destination, "stale-source.js"), "remove me");
+    writeFileSync(join(destination, ".cache", "unrelated.tmp"), "remove me");
+
+    const result = spawnSync("rsync", ["-a", "--delete", ...excludes, `${source}/`, `${destination}/`], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(readFileSync(join(cache, "cached.webp"), "utf8"), "compressed-once");
+    assert.equal(existsSync(join(destination, "stale-source.js")), false);
+    assert.equal(existsSync(join(destination, ".cache", "unrelated.tmp")), false);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
 
 test("chessd starts Go collection before systemd memory pressure", () => {
   assert.ok(unit.includes("Environment=GOMEMLIMIT=5GiB"));
