@@ -282,8 +282,17 @@ async function monitorProduction() {
   }
 }
 
+const branding = new Map([
+  ['/branding/chessalive-logo.png', readFileSync(new URL('./branding/chessalive-logo.png', import.meta.url))],
+  ['/branding/favicon.png', readFileSync(new URL('./branding/favicon.png', import.meta.url))],
+]);
+
 const server = createServer(async (request, response) => {
   const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+  if (request.method === 'GET' && branding.has(url.pathname)) {
+    response.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400', 'X-Content-Type-Options': 'nosniff' });
+    return response.end(branding.get(url.pathname));
+  }
   if (url.pathname === "/health" && request.method === "GET") return sendJson(response, 200, { ok: true, build: state.release.status, monitor: state.monitor.level });
   if (url.pathname === "/api/login" && request.method === "POST") {
     try {

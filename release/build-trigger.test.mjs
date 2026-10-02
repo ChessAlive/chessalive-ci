@@ -33,11 +33,13 @@ test('authenticated console records real child metrics, rejects duplicate builds
   async function stop() { if (child && child.exitCode === null) { child.kill(); await once(child, 'exit'); } }
   async function status() { return (await fetch(`${base}/api/status`, { headers: { cookie } })).json(); }
   try {
-    await mkdir(join(root, 'release'));
+    await mkdir(join(root, 'release/branding'), { recursive: true });
+    for (const file of ['chessalive-logo.png', 'favicon.png']) await copyFile(new URL('branding/' + file, import.meta.url), join(root, 'release/branding', file));
     for (const file of ['build-trigger.mjs', 'build-metrics.mjs', 'dashboard.mjs', 'monitor-policy.mjs']) await copyFile(new URL(file, import.meta.url), join(root, 'release', file));
     await writeFile(join(root, 'release/local-release.sh'), `#!/usr/bin/env bash\nset -eu\nprintf '@@CHESSALIVE_STEP {"id":"web","status":"running"}\\n'\nnode -e 'const bytes=Buffer.alloc(32*1024*1024, 1);setTimeout(()=>console.log(bytes.length),2200)'\nprintf '@@CHESSALIVE_STEP {"id":"web","status":"done"}\\n'\n`);
     await start();
     assert.equal((await fetch(`${base}/api/status`)).status, 401);
+    assert.equal((await fetch(`${base}/branding/chessalive-logo.png`)).headers.get('content-type'), 'image/png');
     assert.equal((await fetch(`${base}/`, { headers: { cookie } })).status, 200);
     assert.equal((await fetch(`${base}/api/build`, { method: 'POST', headers: { cookie } })).status, 202);
     assert.equal((await fetch(`${base}/api/build`, { method: 'POST', headers: { cookie } })).status, 409);
