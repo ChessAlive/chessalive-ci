@@ -10,6 +10,9 @@
 set -euo pipefail
 
 CI_ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${CI_ROOT_DIR}/release/progress.sh"
+trap 'progress_on_exit "$?"' EXIT
+progress_mark prepare running
 SOURCE_DIR="${SOURCE_DIR:-/opt/chessalive}"
 SYNC_SOURCE="${SYNC_SOURCE:-yes}"
 SOURCE_GIT_URL="${SOURCE_GIT_URL:-${BUILD_GIT_URL:-https://github.com/ChessAlive/ChessAlive.git}}"
@@ -100,84 +103,107 @@ BUILD_ARCH="${BUILD_ARCH:-$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')}
 EXPO_PUBLIC_CHESSALIVE_AUDIO_CDN_ORIGIN="${EXPO_PUBLIC_CHESSALIVE_AUDIO_CDN_ORIGIN:-https://objectstorage.ap-mumbai-1.oraclecloud.com/n/bmt2adcjgo0u/b/chessalive-audio/o}"
 
 run() { say "$*"; "$@"; }
+step_run() { local step="$1"; shift; say "$*"; progress_run "${step}" "$@"; }
 
 [[ "${LOCAL_DEPLOY}" == yes ]] || die 'local-release.sh requires LOCAL_DEPLOY=yes; it never delegates builds to Jenkins or Cloud Build'
 command -v node >/dev/null || die 'node is required'
 command -v npm >/dev/null || die 'npm is required'
 command -v go >/dev/null || die 'go is required'
 command -v file >/dev/null || die 'file is required'
+progress_mark prepare done
 
 if [[ "${SKIP_INSTALL}" != yes ]]; then
   # The service also loads the production runtime environment so the built server matches Mumbai.
   # npm treats NODE_ENV=production as a request to omit devDependencies, but the release gate
   # itself needs TypeScript, ESLint, Vitest, Expo, and the build tooling. Explicitly include them.
-  run npm ci --include=dev
+  step_run install npm ci --include=dev
+else
+  progress_mark install skipped
 fi
 
 if [[ "${SKIP_TESTS}" != yes ]]; then
-  run npm run typecheck
-  run npx eslint apps/player-app/src apps/go-server packages --no-error-on-unmatched-pattern
+  step_run typecheck npm run typecheck
+  step_run lint npx eslint apps/player-app/src apps/go-server packages --no-error-on-unmatched-pattern
   if [[ "${SKIP_FULL_TESTS}" == yes ]]; then
     say 'Full Vitest suite skipped (SKIP_FULL_TESTS=yes); typecheck and scoped lint remain enabled'
+    progress_mark tests skipped
   else
-    run npm run test
+    step_run tests npm run test
   fi
-  run npm run test:infra
-  run npm run check:production-audit
-  run npm run check:narration-coverage
+  step_run infra npm run test:infra
+  step_run audit npm run check:production-audit
+  step_run narration npm run check:narration-coverage
+else
+  for step in typecheck lint tests infra audit narration; do progress_mark "${step}" skipped; done
 fi
 
 browser_pid=""
 if [[ "${SKIP_WEB}" != yes && "${SKIP_WEB_SETUP}" != yes ]]; then
   say 'Installing/verifying browser dependencies in parallel with native builds'
-  ( run npm run setup:web-browser ) &
+  ( step_run browser npm run setup:web-browser ) &
   browser_pid="$!"
+else
+  progress_mark browser skipped
 fi
 
 say "Building linux/${BUILD_ARCH} server artifacts in parallel"
 server_status=0
 migrate_status=0
-( env BUILD_ARCH="${BUILD_ARCH}" npm run build:server:local ) &
+( progress_run server env BUILD_ARCH="${BUILD_ARCH}" npm run build:server:local ) &
 server_pid="$!"
-( env BUILD_ARCH="${BUILD_ARCH}" npm run build:migrate:local ) &
+( progress_run migrate env BUILD_ARCH="${BUILD_ARCH}" npm run build:migrate:local ) &
 migrate_pid="$!"
 wait "${server_pid}" || server_status="$?"
 wait "${migrate_pid}" || migrate_status="$?"
+browser_status=0
+if [[ -n "${browser_pid}" ]]; then
+  wait "${browser_pid}" || browser_status="$?"
+fi
+# Reap every parallel job before exiting, including when one build failed.
 (( server_status == 0 )) || die 'server build failed'
 (( migrate_status == 0 )) || die 'migration build failed'
-
-if [[ -n "${browser_pid}" ]]; then
-  browser_status=0
-  wait "${browser_pid}" || browser_status="$?"
-  (( browser_status == 0 )) || die 'browser dependency setup failed'
-fi
+(( browser_status == 0 )) || die 'browser dependency setup failed'
 
 if [[ "${SKIP_WEB}" != yes ]]; then
-  run env EXPO_PUBLIC_CHESSALIVE_AUDIO_CDN_ORIGIN="${EXPO_PUBLIC_CHESSALIVE_AUDIO_CDN_ORIGIN}" npm run build:web
+  step_run web env EXPO_PUBLIC_CHESSALIVE_AUDIO_CDN_ORIGIN="${EXPO_PUBLIC_CHESSALIVE_AUDIO_CDN_ORIGIN}" npm run build:web
   if [[ "${SKIP_BUDGETS}" == yes ]]; then
     say 'Performance/bundle budgets skipped (SKIP_BUDGETS=yes)'
+    progress_mark performance skipped
+    progress_mark bundle skipped
   else
-    run npm run check:performance
-    run npm run check:bundle
+    step_run performance npm run check:performance
+    step_run bundle npm run check:bundle
   fi
+else
+  for step in web performance bundle; do progress_mark "${step}" skipped; done
 fi
 
 if [[ "${SKIP_ASSETS}" != yes ]]; then
+  progress_mark assets running
   run env ASSETS_MIRROR_DELETE="${ASSETS_MIRROR_DELETE:-report}" \
     ASSETS_MIRROR_FORCE="${ASSETS_MIRROR_FORCE:-no}" "${CI_ROOT_DIR}/content/sync-assets.sh" all --mirror
   run "${CI_ROOT_DIR}/content/sync-audio-handoffs.sh"
   run ./infra/oci/sync-assets.sh verify
+  progress_mark assets done
+else
+  progress_mark assets skipped
 fi
 
 if [[ "${SKIP_CONTENT}" != yes ]]; then
+  progress_mark content running
   [[ -f "apps/go-server/chessd-migrate-linux-${BUILD_ARCH}" ]] || die "content publish requires the linux/${BUILD_ARCH} migration binary"
   run env MIGRATE_BIN="${ROOT_DIR}/apps/go-server/chessd-migrate-linux-${BUILD_ARCH}" \
     CONTENT_PRUNE="${CONTENT_PRUNE:-report}" \
     "${CI_ROOT_DIR}/content/publish-content.sh"
+  progress_mark content done
+else
+  progress_mark content skipped
 fi
 
 if [[ "${SKIP_DEPLOY}" == yes ]]; then
   say 'Build complete; deployment skipped (SKIP_DEPLOY=yes)'
+  progress_mark deploy skipped
+  progress_mark health skipped
 else
   if [[ "${DEPLOY_REMOTE}" == yes ]]; then
     say "Deploying from this build host to ${DEPLOY_USER}@${DEPLOY_HOST}"

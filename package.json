@@ -10,7 +10,7 @@
   "scripts": {
     "build-trigger": "node release/build-trigger.mjs",
     "start": "node release/build-trigger.mjs",
-    "test": "node --test release/deployment_contract.test.mjs"
+    "test": "node --test release/*.test.mjs"
   },
   "dependencies": {
     "nodemailer": "^7.0.13"

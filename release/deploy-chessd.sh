@@ -23,6 +23,18 @@ set -euo pipefail
 
 CI_ROOT="${CI_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 SOURCE_ROOT="${SOURCE_ROOT:-/opt/chessalive}"
+source "${CI_ROOT}/release/progress.sh"
+DEPLOY_PROGRESS_LOG=""
+deploy_progress_exit() {
+  local status="$1"
+  if [[ -n "${DEPLOY_PROGRESS_LOG}" ]]; then
+    progress_adopt_log "${DEPLOY_PROGRESS_LOG}"
+    rm -f "${DEPLOY_PROGRESS_LOG}"
+  fi
+  progress_on_exit "${status}"
+}
+trap 'deploy_progress_exit "$?"' EXIT
+progress_mark deploy running
 
 OCI_HOST="${OCI_HOST:-144.24.117.171}"
 OCI_USER="${OCI_USER:-ubuntu}"
@@ -78,12 +90,12 @@ if [[ "${SKIP_BUILD}" == "yes" ]]; then
   [[ -f "${MIGRATE_SRC}" ]] || die "SKIP_BUILD=yes but ${MIGRATE_SRC} does not exist (npm run build:migrate:linux)"
 else
   say "Building chessd (linux/arm64, static)"
-  ( cd "${SOURCE_ROOT}" && npm run --silent build:server:linux && npm run --silent build:migrate:linux )
+  ( cd "${SOURCE_ROOT}" && progress_run server npm run --silent build:server:linux && progress_run migrate npm run --silent build:migrate:linux )
   if [[ "${SKIP_WEB}" != "yes" ]]; then
     say "Building web bundle"
     # Audio is served from object storage, not the bundle — see resolvePublicAssetUrl.
     export EXPO_PUBLIC_CHESSALIVE_AUDIO_CDN_ORIGIN="${EXPO_PUBLIC_CHESSALIVE_AUDIO_CDN_ORIGIN:-https://objectstorage.ap-mumbai-1.oraclecloud.com/n/bmt2adcjgo0u/b/chessalive-audio/o}"
-    ( cd "${SOURCE_ROOT}" && npm run --silent build:web )
+    ( cd "${SOURCE_ROOT}" && progress_run web npm run --silent build:web )
   fi
 fi
 
@@ -138,10 +150,21 @@ fi
 
 # ── Install + health gate ────────────────────────────────────────────────────────────────────────
 say "Installing and restarting ${SERVICE}"
+DEPLOY_PROGRESS_LOG="$(mktemp "${TMPDIR:-/tmp}/chessalive-deploy-progress.XXXXXX")"
 remote "STAGE='${STAGE}' REMOTE_ROOT='${REMOTE_ROOT}' SERVICE='${SERVICE}' \
         HEALTH_URL='${HEALTH_URL}' HEALTH_RETRIES='${HEALTH_RETRIES}' \
-        HEALTH_INTERVAL='${HEALTH_INTERVAL}' SKIP_WEB='${SKIP_WEB}' bash -s" <<'REMOTE_SCRIPT'
+        HEALTH_INTERVAL='${HEALTH_INTERVAL}' SKIP_WEB='${SKIP_WEB}' \
+        CHESSALIVE_PROGRESS='${CHESSALIVE_PROGRESS:-}' bash -s" <<'REMOTE_SCRIPT' | tee "${DEPLOY_PROGRESS_LOG}"
 set -euo pipefail
+
+# The transaction itself identifies the boundary: host transfer time is part of
+# deployment, and restart/health checks (including rollback) belong to health.
+progress_phase=deploy
+remote_progress() {
+  [[ "${CHESSALIVE_PROGRESS:-}" == yes ]] || return 0
+  printf '@@CHESSALIVE_STEP {"id":"%s","status":"%s"}\n' "$1" "$2"
+}
+trap 'remote_status=$?; if (( remote_status != 0 )) && [[ -n "${progress_phase}" ]]; then remote_progress "${progress_phase}" failed; fi' EXIT
 
 BIN_DIR="${REMOTE_ROOT}/bin"
 UNIT_PATH="/etc/systemd/system/${SERVICE}.service"
@@ -198,6 +221,9 @@ if [[ "${SKIP_WEB}" != "yes" ]]; then
   sudo mv "${REMOTE_ROOT}/web.new" "${REMOTE_ROOT}/web"
 fi
 
+remote_progress deploy done
+progress_phase=health
+remote_progress health running
 restart_failed=""
 if ! sudo systemctl daemon-reload || ! sudo systemctl restart "${SERVICE}"; then
   restart_failed=yes
@@ -238,7 +264,12 @@ fi
 sudo rm -f "${BIN_DIR}/chessd.prev"
 sudo rm -rf "${REMOTE_ROOT}/web.old"
 rm -rf "${STAGE}"
+remote_progress health done
+progress_phase=""
 REMOTE_SCRIPT
+progress_adopt_log "${DEPLOY_PROGRESS_LOG}"
+rm -f "${DEPLOY_PROGRESS_LOG}"
+DEPLOY_PROGRESS_LOG=""
 
 say "Deployed"
 # Ask the RUNNING service, not the binary: `chessd --version` starts a fresh process with no
