@@ -148,6 +148,16 @@ UNIT_PATH="/etc/systemd/system/${SERVICE}.service"
 UNIT_BACKUP="${STAGE}/${SERVICE}.service.prev"
 sudo install -d -o root -g root -m 0755 "${BIN_DIR}"
 
+# Coach V5's engine: Stockfish, run by chessd as a separate UCI program (CHESSALIVE_COACH5_ENGINE in
+# the unit). Installed with every deploy so a host never lacks it; idempotent, and never fatal:
+# without the engine chessd keeps Coach V5 off and the Coach page shows the previous Coach.
+if [[ ! -x /usr/games/stockfish ]]; then
+  if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q stockfish >/dev/null 2>&1; then
+    { sudo apt-get update -q >/dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q stockfish >/dev/null 2>&1; } \
+      || echo "! stockfish could not be installed; Coach V5 stays off until it is" >&2
+  fi
+fi
+
 # Keep the running binary so a failed health gate can roll straight back to it.
 if sudo test -f "${BIN_DIR}/chessd"; then
   sudo cp -a "${BIN_DIR}/chessd" "${BIN_DIR}/chessd.prev"

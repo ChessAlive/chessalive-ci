@@ -61,6 +61,16 @@ test("deploys and rolls back the service unit with the binary", () => {
   assert.equal(deploy.match(/sudo systemctl daemon-reload/g)?.length, 2);
 });
 
+test("installs Coach V5's engine with every deploy, and points chessd at it", () => {
+  const install = deploy.indexOf("apt-get install -y -q stockfish");
+  assert.ok(install > 0, "deploy installs the stockfish package");
+  assert.ok(install < deploy.indexOf('sudo systemctl restart "${SERVICE}"'), "before the restart");
+  assert.ok(deploy.includes("if [[ ! -x /usr/games/stockfish ]]; then"), "only when it is missing");
+  assert.ok(deploy.includes("Coach V5 stays off"), "never fatal");
+  assert.ok(unit.includes("Environment=CHESSALIVE_COACH5_ENGINE=/usr/games/stockfish"));
+  assert.ok(unit.indexOf("CHESSALIVE_COACH5_ENGINE") < unit.indexOf("EnvironmentFile=/etc/chessalive.env"), "the Vault env file can still override it");
+});
+
 test("production monitoring runs hourly and sends one detailed email per incident", () => {
   assert.equal(MONITOR_INTERVAL_MS, 3_600_000);
   assert.deepEqual(nextMonitorIncidentState(false, "red"), { active: true, shouldNotify: true });
