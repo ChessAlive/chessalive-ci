@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
@@ -9,9 +9,53 @@ import { createMonitorIssueReport, MONITOR_INTERVAL_MS, nextMonitorIncidentState
 
 const root = new URL("../", import.meta.url);
 const unit = readFileSync(new URL("production/chessd.service", root), "utf8");
+const transaction = readFileSync(new URL("release/runtime_transaction.py", root), "utf8");
+const gatewayUnit = readFileSync(new URL("production/chessgate.service", root), "utf8");
+const slotUnit = readFileSync(new URL("production/chessd@.service", root), "utf8");
 const deploy = readFileSync(new URL("release/deploy-chessd.sh", root), "utf8");
 const buildTrigger = readFileSync(new URL("release/build-trigger.mjs", root), "utf8");
 const localRelease = readFileSync(new URL("release/local-release.sh", root), "utf8");
+
+test("persistent source sync updates the checkout without leaking temporary directories", (t) => {
+  if (spawnSync("rsync", ["--version"]).error?.code === "ENOENT") {
+    t.skip("rsync is unavailable on this test host");
+    return;
+  }
+  const sync = localRelease.match(/sync_source_checkout\(\) \{[\s\S]*?\n\}\n/);
+  assert.ok(sync, "source synchronization function must be present");
+  const scratch = mkdtempSync(join(tmpdir(), "chessalive-persistent-sync-"));
+  const remote = join(scratch, "remote");
+  const source = join(scratch, "source");
+  const git = (...args) => {
+    const result = spawnSync("git", args, { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  try {
+    git("init", "--initial-branch=main", remote);
+    git("-C", remote, "config", "user.name", "Release Test");
+    git("-C", remote, "config", "user.email", "release-test@example.invalid");
+    writeFileSync(join(remote, "version.txt"), "previous");
+    git("-C", remote, "add", "version.txt");
+    git("-C", remote, "-c", "commit.gpgsign=false", "commit", "-m", "Previous version");
+    git("clone", remote, source);
+    writeFileSync(join(remote, "version.txt"), "latest");
+    git("-C", remote, "-c", "commit.gpgsign=false", "commit", "-am", "Latest version");
+    const expected = git("-C", remote, "rev-parse", "HEAD");
+    const result = spawnSync("bash", ["-c", `set -euo pipefail\nsay() { :; }\ndie() { exit 1; }\n${sync[0]}\nsync_source_checkout`], {
+      encoding: "utf8",
+      env: { ...process.env, TMPDIR: scratch, SOURCE_DIR: source, SOURCE_GIT_URL: remote, SOURCE_GIT_REF: "main", SOURCE_SSH_KEY: "",
+        SOURCE_COMMIT_FILE: join(source, ".source-commit"), SOURCE_COMMIT_MESSAGE_FILE: join(source, ".source-message"),
+        SOURCE_COMMIT_DATE_FILE: join(source, ".source-date") },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(readFileSync(join(source, "version.txt"), "utf8"), "latest");
+    assert.equal(readFileSync(join(source, ".source-commit"), "utf8").trim(), expected);
+    assert.deepEqual(readdirSync(scratch).filter(name => name.startsWith("chessalive-source.")), []);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
 
 test("source sync fallback preserves the image cache while deleting stale files", (t) => {
   if (spawnSync("rsync", ["--version"]).error?.code === "ENOENT") {
@@ -52,23 +96,20 @@ test("chessd starts Go collection before systemd memory pressure", () => {
   assert.ok(unit.indexOf("GOMEMLIMIT=5GiB") < unit.indexOf("MemoryHigh=6G"));
 });
 
-test("deploys and rolls back the service unit with the binary", () => {
-  assert.ok(deploy.includes('UNIT_SRC="${CI_ROOT}/production/chessd.service"'));
+test("application releases use isolated units while the connection gateway stays running", () => {
+  assert.ok(deploy.includes('UNIT_SRC="${CI_ROOT}/production/chessd@.service"'));
   assert.ok(deploy.includes('copy_to_host "${UNIT_SRC}" "${STAGE}/chessd.service"'));
-  assert.ok(deploy.includes('sudo cp -a "${UNIT_PATH}" "${UNIT_BACKUP}"'));
-  assert.ok(deploy.includes('sudo install -o root -g root -m 0644 "${STAGE}/chessd.service" "${UNIT_PATH}"'));
-  assert.ok(deploy.includes('sudo install -o root -g root -m 0644 "${UNIT_BACKUP}" "${UNIT_PATH}"'));
-  assert.equal(deploy.match(/sudo systemctl daemon-reload/g)?.length, 2);
+  assert.ok(deploy.includes('"${CI_ROOT}/release/runtime-transaction.sh"'));
+  assert.ok(slotUnit.includes('WorkingDirectory=/opt/chessalive/slots/%i'));
+  assert.ok(slotUnit.includes('EnvironmentFile=/etc/chessalive/slot-%i.env'));
+  assert.ok(slotUnit.includes('ReadWritePaths=/opt/chessalive/data /run/chessalive'));
+  assert.ok(gatewayUnit.includes('ExecStart=/opt/chessalive/bin/chessgate'));
+  assert.ok(!transaction.includes('"restart", "chessgate"'));
 });
 
-test("installs Coach V5's engine with every deploy, and points chessd at it", () => {
-  const install = deploy.indexOf("apt-get install -y -q stockfish");
-  assert.ok(install > 0, "deploy installs the stockfish package");
-  assert.ok(install < deploy.indexOf('sudo systemctl restart "${SERVICE}"'), "before the restart");
-  assert.ok(deploy.includes("if [[ ! -x /usr/games/stockfish ]]; then"), "only when it is missing");
-  assert.ok(deploy.includes("Coach V5 stays off"), "never fatal");
-  assert.ok(unit.includes("Environment=CHESSALIVE_COACH5_ENGINE=/usr/games/stockfish"));
-  assert.ok(unit.indexOf("CHESSALIVE_COACH5_ENGINE") < unit.indexOf("EnvironmentFile=/etc/chessalive.env"), "the Vault env file can still override it");
+test("the optional Coach V5 engine keeps the existing overridable runtime configuration", () => {
+  assert.ok(slotUnit.includes("Environment=CHESSALIVE_COACH5_ENGINE=/usr/games/stockfish"));
+  assert.ok(slotUnit.indexOf("CHESSALIVE_COACH5_ENGINE") < slotUnit.indexOf("EnvironmentFile=/etc/chessalive.env"));
 });
 
 test("production monitoring runs hourly and sends one detailed email per incident", () => {

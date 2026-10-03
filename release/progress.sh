@@ -65,7 +65,7 @@ progress_adopt_log() {
         payload="${line#*\"status\":\"}"
         status="${payload%%\"*}"
         case "${step}:${status}" in
-          deploy:running|deploy:done|deploy:failed|health:running|health:done|health:failed)
+          deploy:running|deploy:done|deploy:failed|health:running|health:done|health:failed|rollback_prepare:running|rollback_prepare:done|rollback_prepare:failed|rollback_restore:running|rollback_restore:done|rollback_restore:failed|rollback_health:running|rollback_health:done|rollback_health:failed)
             progress_track "${step}" "${status}"
             ;;
         esac

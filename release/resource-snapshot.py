@@ -142,7 +142,7 @@ def processes():
 def services():
     """Cgroup memory is a service measurement; RSS sums can count shared pages twice."""
     try:
-        result = subprocess.run(['systemctl', 'show', 'chessd', 'chessalive-build-trigger',
+        result = subprocess.run(['systemctl', 'show', 'chessd', 'chessd@blue', 'chessd@green', 'chessgate', 'chessalive-build-trigger',
                                  '--property=Id,LoadState,ActiveState,MemoryCurrent,MemoryPeak,MemoryMax,CPUUsageNSec'],
                                 capture_output=True, text=True, timeout=2, check=True)
     except (OSError, subprocess.SubprocessError):

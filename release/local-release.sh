@@ -30,8 +30,6 @@ sync_source_checkout() {
   command -v rsync >/dev/null || die 'rsync is required to synchronize the release checkout'
   [[ -n "${SOURCE_GIT_URL}" ]] || die 'SOURCE_GIT_URL is empty; cannot synchronize the release checkout'
 
-  local checkout
-  checkout="$(mktemp -d "${TMPDIR:-/tmp}/chessalive-source.XXXXXX")"
   say "Synchronizing ${SOURCE_GIT_URL} @ ${SOURCE_GIT_REF}"
   if [[ -n "${SOURCE_SSH_KEY}" ]]; then
     [[ -r "${SOURCE_SSH_KEY}" ]] || die "SOURCE_SSH_KEY is not readable: ${SOURCE_SSH_KEY}"
@@ -51,6 +49,8 @@ sync_source_checkout() {
     return 0
   fi
 
+  local checkout
+  checkout="$(mktemp -d "${TMPDIR:-/tmp}/chessalive-source.XXXXXX")"
   git clone --quiet --depth=1 --branch "${SOURCE_GIT_REF}" "${SOURCE_GIT_URL}" "${checkout}/repo"
 
   # Keep generated dependencies, build output, and content-addressed image cache local, but delete
@@ -149,7 +149,11 @@ fi
 say "Building linux/${BUILD_ARCH} server artifacts in parallel"
 server_status=0
 migrate_status=0
-( progress_run server env BUILD_ARCH="${BUILD_ARCH}" npm run build:server:local ) &
+build_server_artifacts() {
+  env BUILD_ARCH="${BUILD_ARCH}" npm run build:server:local || return "$?"
+  env BUILD_ARCH="${BUILD_ARCH}" npm run build:gateway:local
+}
+( progress_run server build_server_artifacts ) &
 server_pid="$!"
 ( progress_run migrate env BUILD_ARCH="${BUILD_ARCH}" npm run build:migrate:local ) &
 migrate_pid="$!"

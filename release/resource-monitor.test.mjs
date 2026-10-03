@@ -338,7 +338,7 @@ def ps(*args, **kwargs):
         assert kwargs['timeout'] == 2
         if payload.get('psFailure'): raise subprocess.TimeoutExpired('ps', 2)
         return SimpleNamespace(stdout=payload.get('ps', ''))
-    assert command == ['systemctl', 'show', 'chessd', 'chessalive-build-trigger', '--property=Id,LoadState,ActiveState,MemoryCurrent,MemoryPeak,MemoryMax,CPUUsageNSec'], 'unexpected system inspection'
+    assert command == ['systemctl', 'show', 'chessd', 'chessd@blue', 'chessd@green', 'chessgate', 'chessalive-build-trigger', '--property=Id,LoadState,ActiveState,MemoryCurrent,MemoryPeak,MemoryMax,CPUUsageNSec'], 'unexpected system inspection'
     if payload.get('servicesFailure'): raise subprocess.CalledProcessError(1, command)
     return SimpleNamespace(stdout=payload.get('services', ''))
 def metadata(request, timeout):

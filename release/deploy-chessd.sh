@@ -1,18 +1,14 @@
 #!/usr/bin/env bash
 #
-# Deploy chessd + the web bundle to the OCI A1 box.
+# Deploy an isolated chessd release behind the persistent connection gateway.
 #
 # This is the ONLY supported chessd deploy path. Before it existed the OCI box was provisioned by
 # hand, which is how the box and the repo drifted apart; anything you change on the server that
 # should survive the next deploy belongs in this file (or in the systemd unit beside it).
 #
-# Safety model — the deploy is reversible at every step:
-#   • the previous binary is kept as chessd.prev and restored automatically if the new one fails
-#     its health gate, so a bad build costs ~15s of downtime rather than an outage;
-#   • the web bundle is staged into a sibling directory and swapped by rename, so a half-uploaded
-#     bundle is never served;
-#   • secrets are never uploaded — /etc/chessalive.env is owned by OCI Vault
-#     (chessalive-pull-secrets.sh). This script does not read or write it.
+# The gateway retains browser connections while the sole writer hands its state to a fresh
+# application. One complete prior release remains available; immutable browser assets are
+# deduplicated separately so long-lived tabs retain their exact files.
 #
 # Usage:
 #   infra/oci/deploy-chessd.sh                 # build, upload, restart, health-gate
@@ -50,11 +46,12 @@ SKIP_WEB="${SKIP_WEB:-}"
 TARGET_ARCH="${TARGET_ARCH:-$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')}"
 
 BINARY_SRC="${SOURCE_ROOT}/apps/go-server/chessd-linux-${TARGET_ARCH}"
+GATEWAY_SRC="${SOURCE_ROOT}/apps/go-server/chessgate-linux-${TARGET_ARCH}"
 # chessd-migrate rides with every release so content publishes (publish-content.sh, the content
 # lane on the CI box) write the catalog with the SAME persistence code the running server has.
 MIGRATE_SRC="${SOURCE_ROOT}/apps/go-server/chessd-migrate-linux-${TARGET_ARCH}"
 WEB_SRC="${SOURCE_ROOT}/apps/player-app/dist"
-UNIT_SRC="${CI_ROOT}/production/chessd.service"
+UNIT_SRC="${CI_ROOT}/production/chessd@.service"
 
 SSH_OPTS=(-o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new)
 [[ -n "${SSH_KEY}" ]] && SSH_OPTS+=(-i "${SSH_KEY}")
@@ -75,8 +72,8 @@ die() { printf '\n\033[31m✖ %s\033[0m\n' "$*" >&2; exit 1; }
 # ── Preflight ────────────────────────────────────────────────────────────────────────────────────
 say "Preflight"
 remote true || die "cannot ssh to ${OCI_USER}@${OCI_HOST}"
-remote "sudo -n systemctl is-enabled ${SERVICE} >/dev/null 2>&1" \
-  || die "${SERVICE}.service is not installed on the host. Install infra/oci/chessd.service first."
+remote "sudo -n test -f /etc/systemd/system/chessd.service" \
+  || die "The production service has not been provisioned on this host."
 # A deploy that lands on a box with no env file starts a server with no database and no session
 # secret — it would boot, pass /health, and quietly serve a broken app.
 remote "sudo -n test -s /etc/chessalive.env" \
@@ -88,9 +85,11 @@ if [[ "${SKIP_BUILD}" == "yes" ]]; then
   say "Build skipped (SKIP_BUILD=yes) — using existing artifacts"
   [[ -f "${BINARY_SRC}" ]] || die "SKIP_BUILD=yes but ${BINARY_SRC} does not exist"
   [[ -f "${MIGRATE_SRC}" ]] || die "SKIP_BUILD=yes but ${MIGRATE_SRC} does not exist (npm run build:migrate:linux)"
+  [[ -f "${GATEWAY_SRC}" ]] || die "SKIP_BUILD=yes but the persistent gateway artifact is missing"
 else
   say "Building chessd (linux/arm64, static)"
   ( cd "${SOURCE_ROOT}" && progress_run server npm run --silent build:server:linux && progress_run migrate npm run --silent build:migrate:linux )
+  ( cd "${SOURCE_ROOT}" && BUILD_ARCH="${TARGET_ARCH}" npm run --silent build:gateway:local )
   if [[ "${SKIP_WEB}" != "yes" ]]; then
     say "Building web bundle"
     # Audio is served from object storage, not the bundle — see resolvePublicAssetUrl.
@@ -110,15 +109,42 @@ file "${BINARY_SRC}" | grep -q "${EXPECTED_FILE_ARCH}" \
   || die "${BINARY_SRC} is not a ${TARGET_ARCH} ELF binary — wrong GOOS/GOARCH would fail on the host"
 file "${MIGRATE_SRC}" | grep -q "${EXPECTED_FILE_ARCH}" \
   || die "${MIGRATE_SRC} is not a ${TARGET_ARCH} ELF binary"
+file "${GATEWAY_SRC}" | grep -q "${EXPECTED_FILE_ARCH}" \
+  || die "${GATEWAY_SRC} is not a ${TARGET_ARCH} ELF binary"
 
 # ── Upload ───────────────────────────────────────────────────────────────────────────────────────
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-STAGE="/tmp/chessd-deploy-${STAMP}"
+STAGE="$(remote 'mktemp -d /tmp/chessd-deploy-XXXXXXXX')"
+[[ "${STAGE}" =~ ^/tmp/chessd-deploy-[a-zA-Z0-9._-]+$ ]] || die 'Invalid staging directory returned by host'
 say "Staging deployment at ${STAGE}"
-remote "mkdir -p ${STAGE}"
 copy_to_host "${BINARY_SRC}" "${STAGE}/chessd"
+copy_to_host "${GATEWAY_SRC}" "${STAGE}/chessgate"
 copy_to_host "${UNIT_SRC}" "${STAGE}/chessd.service"
 copy_to_host "${MIGRATE_SRC}" "${STAGE}/chessd-migrate"
+for name in runtime_transaction.py release_store.py handoff.py; do
+  copy_to_host "${CI_ROOT}/release/${name}" "${STAGE}/${name}"
+done
+for name in chessgate.service chessalive-runtime.conf; do
+  copy_to_host "${CI_ROOT}/production/${name}" "${STAGE}/${name}"
+done
+
+# Tie the installed release to its source, independent of later checkout updates or rollback.
+RELEASE_METADATA="$(mktemp "${TMPDIR:-/tmp}/chessalive-release-metadata.XXXXXX")"
+python3 - "${SOURCE_ROOT}" > "${RELEASE_METADATA}" <<'PY_METADATA'
+import json, os, pathlib, subprocess, sys
+root = pathlib.Path(sys.argv[1])
+def source_value(env, name, git_args):
+    path = pathlib.Path(os.environ.get(env, str(root / name)))
+    try: return path.read_text().strip() or None
+    except OSError:
+        try: return subprocess.check_output(['git', '-C', str(root), *git_args], stderr=subprocess.DEVNULL, text=True).strip() or None
+        except (OSError, subprocess.CalledProcessError): return None
+print(json.dumps(dict(commitHash=source_value('SOURCE_COMMIT_FILE', '.source-commit', ['rev-parse', 'HEAD']),
+                     commitMessage=source_value('SOURCE_COMMIT_MESSAGE_FILE', '.source-commit-message', ['log', '-1', '--format=%s']),
+                     commitDate=source_value('SOURCE_COMMIT_DATE_FILE', '.source-commit-date', ['log', '-1', '--format=%aI']))))
+PY_METADATA
+copy_to_host "${RELEASE_METADATA}" "${STAGE}/release.json"
+rm -f "${RELEASE_METADATA}"
 
 # The puzzle catalog ships WITH the server, not the web bundle: chessd reads it at runtime
 # (packages/data/puzzles.json + daily-puzzles.json). Without it the daily endpoint 404s and
@@ -139,134 +165,21 @@ if [[ "${SKIP_WEB}" != "yes" ]]; then
     copy_to_host "${PREBUILT_WEB_ARCHIVE}" "${STAGE}/web.tar.gz"
   else
     [[ -d "${WEB_SRC}" ]] || die "web bundle not found at ${WEB_SRC}"
-    WEB_TAR="/tmp/chessd-web-${STAMP}.tar.gz"
-    # COPYFILE_DISABLE stops macOS from injecting ._AppleDouble files into the archive.
-    COPYFILE_DISABLE=1 tar --no-xattrs -czf "${WEB_TAR}" -C "${WEB_SRC}" .
-    echo "web bundle: $(du -h "${WEB_TAR}" | cut -f1)"
-    copy_to_host "${WEB_TAR}" "${STAGE}/web.tar.gz"
-    rm -f "${WEB_TAR}"
+    # Stream directly to production; Hyderabad need not hold a second multi-GB bundle.
+    echo 'Streaming the web bundle to the production staging directory'
+    COPYFILE_DISABLE=1 tar --no-xattrs -czf - -C "${WEB_SRC}" . \
+      | remote "cat > '${STAGE}/web.tar.gz'"
   fi
 fi
 
 # ── Install + health gate ────────────────────────────────────────────────────────────────────────
-say "Installing and restarting ${SERVICE}"
+say "Handing traffic and game state to the verified release"
 DEPLOY_PROGRESS_LOG="$(mktemp "${TMPDIR:-/tmp}/chessalive-deploy-progress.XXXXXX")"
-remote "STAGE='${STAGE}' REMOTE_ROOT='${REMOTE_ROOT}' SERVICE='${SERVICE}' \
-        HEALTH_URL='${HEALTH_URL}' HEALTH_RETRIES='${HEALTH_RETRIES}' \
-        HEALTH_INTERVAL='${HEALTH_INTERVAL}' SKIP_WEB='${SKIP_WEB}' \
-        CHESSALIVE_PROGRESS='${CHESSALIVE_PROGRESS:-}' bash -s" <<'REMOTE_SCRIPT' | tee "${DEPLOY_PROGRESS_LOG}"
-set -euo pipefail
+# Pass values as shell-quoted arguments rather than interpolating an SSH command.
+printf -v remote_command 'sudo -n env MODE=deploy STAGE=%q REMOTE_ROOT=%q SERVICE=%q HEALTH_URL=%q HEALTH_RETRIES=%q HEALTH_INTERVAL=%q SKIP_WEB=%q CHESSALIVE_PROGRESS=%q bash -s' \
+  "${STAGE}" "${REMOTE_ROOT}" "${SERVICE}" "${HEALTH_URL}" "${HEALTH_RETRIES}" "${HEALTH_INTERVAL}" "${SKIP_WEB}" "${CHESSALIVE_PROGRESS:-}"
+remote "${remote_command}" < "${CI_ROOT}/release/runtime-transaction.sh" | tee "${DEPLOY_PROGRESS_LOG}"
 
-# The transaction itself identifies the boundary: host transfer time is part of
-# deployment, and restart/health checks (including rollback) belong to health.
-progress_phase=deploy
-remote_progress() {
-  [[ "${CHESSALIVE_PROGRESS:-}" == yes ]] || return 0
-  printf '@@CHESSALIVE_STEP {"id":"%s","status":"%s"}\n' "$1" "$2"
-}
-trap 'remote_status=$?; if (( remote_status != 0 )) && [[ -n "${progress_phase}" ]]; then remote_progress "${progress_phase}" failed; fi' EXIT
-
-BIN_DIR="${REMOTE_ROOT}/bin"
-UNIT_PATH="/etc/systemd/system/${SERVICE}.service"
-UNIT_BACKUP="${STAGE}/${SERVICE}.service.prev"
-sudo install -d -o root -g root -m 0755 "${BIN_DIR}"
-
-# Coach V5's engine: Stockfish, run by chessd as a separate UCI program (CHESSALIVE_COACH5_ENGINE in
-# the unit). Installed with every deploy so a host never lacks it; idempotent, and never fatal:
-# without the engine chessd keeps Coach V5 off and the Coach page shows the previous Coach.
-if [[ ! -x /usr/games/stockfish ]]; then
-  if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q stockfish >/dev/null 2>&1; then
-    { sudo apt-get update -q >/dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q stockfish >/dev/null 2>&1; } \
-      || echo "! stockfish could not be installed; Coach V5 stays off until it is" >&2
-  fi
-fi
-
-# Keep the running binary so a failed health gate can roll straight back to it.
-if sudo test -f "${BIN_DIR}/chessd"; then
-  sudo cp -a "${BIN_DIR}/chessd" "${BIN_DIR}/chessd.prev"
-fi
-sudo install -o root -g root -m 0755 "${STAGE}/chessd" "${BIN_DIR}/chessd.new"
-# Not part of the health gate: it is only ever run by a content publish, never by the service.
-sudo install -o root -g root -m 0755 "${STAGE}/chessd-migrate" "${BIN_DIR}/chessd-migrate"
-
-# The unit is runtime code too: memory ceilings, privileges, and the executable path must deploy
-# with the binary instead of drifting as one-time host setup. Keep the active unit so a failed
-# restart or health gate restores the complete previous runtime, not only the executable.
-sudo cp -a "${UNIT_PATH}" "${UNIT_BACKUP}"
-sudo install -o root -g root -m 0644 "${STAGE}/chessd.service" "${UNIT_PATH}"
-
-if [[ "${SKIP_WEB}" != "yes" ]]; then
-  # Stage into a sibling then rename: the swap is atomic, so no request ever sees a partial bundle.
-  sudo rm -rf "${REMOTE_ROOT}/web.new"
-  sudo install -d -o chessalive -g chessalive -m 0755 "${REMOTE_ROOT}/web.new"
-  sudo tar -xzf "${STAGE}/web.tar.gz" -C "${REMOTE_ROOT}/web.new"
-  sudo chown -R chessalive:chessalive "${REMOTE_ROOT}/web.new"
-fi
-
-# chessd's WorkingDirectory is REMOTE_ROOT and puzzlesDataDir() searches upward for
-# packages/data/puzzles.json, so this is the first place it looks. Swap by rename so a restart
-# never reads a half-extracted catalog.
-sudo rm -rf "${REMOTE_ROOT}/packages/data.new"
-sudo install -d -o chessalive -g chessalive -m 0755 "${REMOTE_ROOT}/packages/data.new"
-sudo tar -xzf "${STAGE}/data.tar.gz" -C "${REMOTE_ROOT}/packages/data.new"
-sudo chown -R chessalive:chessalive "${REMOTE_ROOT}/packages/data.new"
-sudo rm -rf "${REMOTE_ROOT}/packages/data.old"
-sudo test -d "${REMOTE_ROOT}/packages/data" && sudo mv "${REMOTE_ROOT}/packages/data" "${REMOTE_ROOT}/packages/data.old"
-sudo mv "${REMOTE_ROOT}/packages/data.new" "${REMOTE_ROOT}/packages/data"
-
-sudo mv "${BIN_DIR}/chessd.new" "${BIN_DIR}/chessd"
-if [[ "${SKIP_WEB}" != "yes" ]]; then
-  sudo rm -rf "${REMOTE_ROOT}/web.old"
-  sudo test -d "${REMOTE_ROOT}/web" && sudo mv "${REMOTE_ROOT}/web" "${REMOTE_ROOT}/web.old"
-  sudo mv "${REMOTE_ROOT}/web.new" "${REMOTE_ROOT}/web"
-fi
-
-remote_progress deploy done
-progress_phase=health
-remote_progress health running
-restart_failed=""
-if ! sudo systemctl daemon-reload || ! sudo systemctl restart "${SERVICE}"; then
-  restart_failed=yes
-fi
-
-# ── Health gate ──────────────────────────────────────────────────────────────────────────────────
-ok=""
-if [[ -z "${restart_failed}" ]]; then
-  for i in $(seq 1 "${HEALTH_RETRIES}"); do
-    if curl -fsS --max-time 3 "${HEALTH_URL}" 2>/dev/null | grep -q '"ok":true'; then
-      ok=yes; echo "health ok after ${i}s"; break
-    fi
-    sleep "${HEALTH_INTERVAL}"
-  done
-fi
-
-if [[ -z "${ok}" ]]; then
-  echo "✖ health gate FAILED — rolling back" >&2
-  sudo systemctl status "${SERVICE}" --no-pager -l | tail -30 >&2 || true
-  sudo journalctl -u "${SERVICE}" -n 50 --no-pager >&2 || true
-  if sudo test -f "${BIN_DIR}/chessd.prev"; then
-    sudo mv "${BIN_DIR}/chessd.prev" "${BIN_DIR}/chessd"
-    if [[ "${SKIP_WEB}" != "yes" ]] && sudo test -d "${REMOTE_ROOT}/web.old"; then
-      sudo rm -rf "${REMOTE_ROOT}/web"
-      sudo mv "${REMOTE_ROOT}/web.old" "${REMOTE_ROOT}/web"
-    fi
-    sudo install -o root -g root -m 0644 "${UNIT_BACKUP}" "${UNIT_PATH}"
-    sudo systemctl daemon-reload
-    sudo systemctl restart "${SERVICE}"
-    echo "rolled back to the previous binary and service unit" >&2
-  else
-    echo "no previous binary to roll back to — service is DOWN" >&2
-  fi
-  rm -rf "${STAGE}"
-  exit 1
-fi
-
-sudo rm -f "${BIN_DIR}/chessd.prev"
-sudo rm -rf "${REMOTE_ROOT}/web.old"
-rm -rf "${STAGE}"
-remote_progress health done
-progress_phase=""
-REMOTE_SCRIPT
 progress_adopt_log "${DEPLOY_PROGRESS_LOG}"
 rm -f "${DEPLOY_PROGRESS_LOG}"
 DEPLOY_PROGRESS_LOG=""
@@ -274,7 +187,7 @@ DEPLOY_PROGRESS_LOG=""
 say "Deployed"
 # Ask the RUNNING service, not the binary: `chessd --version` starts a fresh process with no
 # EnvironmentFile, so it fails config validation and prints a scary (meaningless) error.
-remote "systemctl is-active ${SERVICE}"
+remote "systemctl is-active chessgate"
 curl -fsS --max-time 10 "${PUBLIC_URL:-https://chessalive.com}/version" 2>/dev/null || true
 echo
 echo "${PUBLIC_URL:-https://chessalive.com}"

@@ -1,0 +1,31 @@
+[Unit]
+Description=ChessAlive application release (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=chessalive
+Group=chessalive
+Environment=NODE_ENV=production
+Environment=GOMEMLIMIT=5GiB
+Environment=CHESSALIVE_COACH5_ENGINE=/usr/games/stockfish
+EnvironmentFile=/etc/chessalive.env
+EnvironmentFile=/etc/chessalive/slot-%i.env
+ExecStart=/opt/chessalive/slots/%i/chessd
+WorkingDirectory=/opt/chessalive/slots/%i
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=90
+MemoryMax=8G
+MemoryHigh=6G
+OOMPolicy=stop
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/chessalive/data /run/chessalive
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

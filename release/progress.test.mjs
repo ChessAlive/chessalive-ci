@@ -75,7 +75,7 @@ test('optional gates emit skipped exactly once and never run their commands', t 
   for (const id of allSteps.filter(id => !['prepare', 'server', 'migrate'].includes(id))) {
     assert.deepEqual(events(result).filter(event => event.id === id), [marker(id, 'skipped')]);
   }
-  assert.deepEqual(readFileSync(f.commandLog, 'utf8').trim().split('\n').sort(), ['npm run build:migrate:local', 'npm run build:server:local']);
+  assert.deepEqual(readFileSync(f.commandLog, 'utf8').trim().split('\n').sort(), ['npm run build:gateway:local', 'npm run build:migrate:local', 'npm run build:server:local']);
 });
 
 test('progress markers are opt-in', t => {
@@ -99,36 +99,11 @@ test('remote reconciliation fails health after transport loss without rewriting 
   assert.deepEqual(events(result), [marker('deploy', 'running'), marker('health', 'failed')]);
 });
 
-const deployScript = readFileSync(path.join(releaseDir, 'deploy-chessd.sh'), 'utf8');
-const remoteScript = deployScript.split("<<'REMOTE_SCRIPT' | tee \"${DEPLOY_PROGRESS_LOG}\"\n")[1].split('\nREMOTE_SCRIPT\n')[0];
-
-function runRemote(t, overrides = {}) {
+test('rollback reconciliation retains the actual phase after transport loss', t => {
   const f = fixture(t);
-  writeFileSync(path.join(f.bin, 'sudo'), `#!/bin/sh\nprintf '%s\\n' "$*" >> "$COMMAND_LOG"\ncase "$*" in *chessd.new*) if [ "\${FAIL_INSTALL:-}" = yes ]; then exit 19; fi ;; esac\nexit 0\n`, { mode: 0o755 });
-  writeFileSync(path.join(f.bin, 'curl'), `#!/bin/sh\nif [ "\${FAIL_HEALTH:-}" = yes ]; then exit 22; fi\nprintf '{"ok":true}'\n`, { mode: 0o755 });
-  writeFileSync(path.join(f.bin, 'sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-  const stage = path.join(f.root, 'stage');
-  mkdirSync(stage);
-  const result = spawnSync('bash', ['-s'], { input: remoteScript, encoding: 'utf8', timeout: 10000, env: { ...f.env, STAGE: stage, REMOTE_ROOT: path.join(f.root, 'remote'), SERVICE: 'chessd-progress-test', HEALTH_URL: 'http://unused.invalid/health', HEALTH_RETRIES: '2', HEALTH_INTERVAL: '0', SKIP_WEB: 'no', FAIL_INSTALL: '', FAIL_HEALTH: '', ...overrides } });
-  return { ...f, result };
-}
-
-test('remote transaction reports install then actual health gate', t => {
-  const { result } = runRemote(t);
-  assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(events(result), [marker('deploy', 'done'), marker('health', 'running'), marker('health', 'done')]);
-});
-
-test('remote install failure does not start health and keeps its failure status', t => {
-  const { result } = runRemote(t, { FAIL_INSTALL: 'yes' });
-  assert.equal(result.status, 19, result.stderr);
-  assert.deepEqual(events(result), [marker('deploy', 'failed')]);
-});
-
-test('failed health gate rolls back and never rewrites installation as failed', t => {
-  const { result, commandLog } = runRemote(t, { FAIL_HEALTH: 'yes' });
-  assert.equal(result.status, 1, result.stderr);
-  assert.deepEqual(events(result), [marker('deploy', 'done'), marker('health', 'running'), marker('health', 'failed')]);
-  assert.match(result.stderr, /rolled back to the previous binary and service unit/);
-  assert.match(readFileSync(commandLog, 'utf8'), /chessd\.prev.*chessd/);
+  const log = path.join(f.root, 'rollback.log');
+  writeFileSync(log, '@@CHESSALIVE_STEP {"id":"rollback_prepare","status":"done"}\n@@CHESSALIVE_STEP {"id":"rollback_restore","status":"done"}\n@@CHESSALIVE_STEP {"id":"rollback_health","status":"running"}\n');
+  const result = spawnSync('bash', ['-c', 'set -euo pipefail; source "$1"; trap \'progress_on_exit "$?"\' EXIT; progress_mark rollback_prepare running; progress_adopt_log "$2"; exit 255', 'test', progressScript, log], { env: f.env, encoding: 'utf8' });
+  assert.equal(result.status, 255, result.stderr);
+  assert.deepEqual(events(result), [marker('rollback_prepare', 'running'), marker('rollback_health', 'failed')]);
 });

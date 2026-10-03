@@ -14,7 +14,7 @@ browser → Hyderabad :8787 (in-page password)
 ```
 
 There is no Jenkins, Google Cloud Build, or second build service in this path. Mumbai is a
-production-only host: it runs the chessd service and serves the already-built web bundle. The
+production-only host: it runs the persistent connection gateway and active application slot, serving the already-built web bundle. The
 Hyderabad host is the only place that builds, releases, monitors, and sends operations mail.
 
 The release lane deliberately skips object-storage asset mirroring and content publishing. Those
@@ -77,6 +77,9 @@ reports that status, and does not invent unavailable entitlement balances.
 
 ## Safety boundary
 
-`Release Now` performs code install, tests, ARM64 compilation, web build, atomic deployment, and a
-Mumbai health gate. It does not run database migrations or publish content. A failed health gate
-restores the previous Mumbai binary, web bundle, and service unit.
+`Release Now` performs code install, tests, ARM64 compilation, web build, a connection-preserving
+application handoff, and Mumbai readiness checks. It does not publish content or run standalone
+database migrations. One complete compatible previous release supports the console Rollback
+button. Failed candidates recover through a fresh previous process with the latest transferred
+game state. See [deployment and recovery](release/SEAMLESS_DEPLOYMENTS.md) for bootstrap,
+retention, operational limits and interrupted-release recovery.
