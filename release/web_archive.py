@@ -1,5 +1,6 @@
 """Stream changed web files; the installer verifies and links unchanged release bytes."""
 import argparse
+import gzip
 import io
 import json
 from pathlib import Path
@@ -31,7 +32,10 @@ def write_archive(root, baseline, output):
     reused = {name: checksum for name, checksum in files.items()
               if reusable and base["files"].get("web/" + name) == checksum}
     changed = sorted(set(files) - reused.keys())
-    with tarfile.open(fileobj=output, mode="w|gz", compresslevel=1) as archive:
+    # Python 3.9 on the build host cannot pass compresslevel to tar's stream
+    # mode. Wrap the stream explicitly, keeping the same fast gzip settings.
+    with gzip.GzipFile(fileobj=output, mode="wb", compresslevel=1, mtime=0) as compressed, \
+            tarfile.open(fileobj=compressed, mode="w|") as archive:
         if reused:
             data = json.dumps({"schemaVersion": 1, "baseRelease": base_id,
                                "files": files, "reused": reused}, separators=(",", ":")).encode()
