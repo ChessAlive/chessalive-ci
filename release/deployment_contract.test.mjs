@@ -15,6 +15,7 @@ const slotUnit = readFileSync(new URL("production/chessd@.service", root), "utf8
 const deploy = readFileSync(new URL("release/deploy-chessd.sh", root), "utf8");
 const buildTrigger = readFileSync(new URL("release/build-trigger.mjs", root), "utf8");
 const localRelease = readFileSync(new URL("release/local-release.sh", root), "utf8");
+const runtimeTransaction = readFileSync(new URL("release/runtime-transaction.sh", root), "utf8");
 
 test("persistent source sync updates the checkout without leaking temporary directories", (t) => {
   if (spawnSync("rsync", ["--version"]).error?.code === "ENOENT") {
@@ -185,4 +186,17 @@ test("production monitoring runs hourly and sends one detailed email per inciden
   assert.match(issue.summary, /\/coach: request failed after 8001ms \(request timed out\)/);
   assert.ok(buildTrigger.includes("setInterval(() => void monitorProduction(), MONITOR_INTERVAL_MS)"));
   assert.ok(!buildTrigger.includes("ChessAlive monitoring: recovered"));
+});
+
+// Coach V5 needs its engine on the production host. It is installed by every deploy (before the
+// candidate slot starts), so a new host or a rewritten deploy can never silently lose it.
+test("every deploy installs Coach V5's engine before the candidate starts, and the slots use it", () => {
+  const install = runtimeTransaction.indexOf("apt-get install -y -q stockfish");
+  assert.ok(install > 0, "runtime-transaction.sh installs the stockfish package");
+  assert.ok(install > runtimeTransaction.indexOf('if [[ "${MODE}" == deploy ]]; then'), "in a deploy");
+  assert.ok(install < runtimeTransaction.indexOf("exec systemd-run"), "before the transaction starts the candidate");
+  assert.ok(runtimeTransaction.includes("if [[ ! -x /usr/games/stockfish ]]"), "only when missing");
+  assert.ok(runtimeTransaction.includes("Coach V5 stays off"), "never fatal");
+  assert.ok(deploy.includes("sudo -n env MODE=deploy"), "the transaction runs as root");
+  assert.ok(slotUnit.includes("Environment=CHESSALIVE_COACH5_ENGINE=/usr/games/stockfish"));
 });

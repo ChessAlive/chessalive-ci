@@ -26,7 +26,7 @@ Environment=GOMEMLIMIT=5GiB
 # refusal to preview OTP codes. The OCI Vault env file does NOT set this, so pin it in the unit
 # (the GCP box does the same in infra/gcp/deploy-vm.sh) — otherwise those checks silently relax.
 Environment=NODE_ENV=production
-# Coach V5's engine, installed by release/deploy-chessd.sh (Ubuntu's stockfish package). Only Coach V5
+# Coach V5's engine, installed by every deploy (release/runtime-transaction.sh). Only Coach V5
 # uses it (CHESSALIVE_STOCKFISH_PATH would also turn on cloud analysis and server bot play). If the
 # file is missing, chessd keeps Coach V5 off. /etc/chessalive.env may override it.
 Environment=CHESSALIVE_COACH5_ENGINE=/usr/games/stockfish
