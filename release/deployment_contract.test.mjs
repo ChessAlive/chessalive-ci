@@ -57,6 +57,64 @@ test("persistent source sync updates the checkout without leaking temporary dire
   }
 });
 
+test("single-branch source sync builds the fetched non-main branch despite missing or stale tracking refs", (t) => {
+  if (spawnSync("rsync", ["--version"]).error?.code === "ENOENT") {
+    t.skip("rsync is unavailable on this test host");
+    return;
+  }
+  const sync = localRelease.match(/sync_source_checkout\(\) \{[\s\S]*?\n\}\n/);
+  assert.ok(sync);
+  const scratch = mkdtempSync(join(tmpdir(), "chessalive-selected-source-"));
+  const remote = join(scratch, "remote");
+  const source = join(scratch, "source");
+  const branch = "codex/verified-release";
+  const git = (...args) => {
+    const result = spawnSync("git", args, { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  const synchronize = () => {
+    const result = spawnSync("bash", ["-c", `set -euo pipefail\nsay() { :; }\ndie() { exit 1; }\n${sync[0]}\nsync_source_checkout`], {
+      encoding: "utf8",
+      env: { ...process.env, TMPDIR: scratch, SOURCE_DIR: source, SOURCE_GIT_URL: remote, SOURCE_GIT_REF: branch, SOURCE_SSH_KEY: "",
+        SOURCE_COMMIT_FILE: join(source, ".source-commit"), SOURCE_COMMIT_MESSAGE_FILE: join(source, ".source-message"),
+        SOURCE_COMMIT_DATE_FILE: join(source, ".source-date") },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(git("-C", source, "rev-parse", "HEAD"), git("-C", remote, "rev-parse", "HEAD"));
+    assert.equal(readFileSync(join(source, ".source-commit"), "utf8").trim(), git("-C", remote, "rev-parse", "HEAD"));
+    assert.equal(readFileSync(join(source, ".source-message"), "utf8").trim(), git("-C", remote, "log", "-1", "--format=%s"));
+    assert.equal(readFileSync(join(source, ".source-date"), "utf8").trim(), git("-C", remote, "log", "-1", "--format=%aI"));
+  };
+  try {
+    git("init", "--initial-branch=main", remote);
+    git("-C", remote, "config", "user.name", "Release Test");
+    git("-C", remote, "config", "user.email", "release-test@example.invalid");
+    writeFileSync(join(remote, "version.txt"), "main");
+    git("-C", remote, "add", "version.txt");
+    git("-C", remote, "-c", "commit.gpgsign=false", "commit", "-m", "Main version");
+    const main = git("-C", remote, "rev-parse", "HEAD");
+    git("clone", "--single-branch", "--branch", "main", remote, source);
+    assert.equal(git("-C", source, "config", "--get-all", "remote.origin.fetch"), "+refs/heads/main:refs/remotes/origin/main");
+    git("-C", remote, "checkout", "-b", branch);
+    writeFileSync(join(remote, "version.txt"), "selected first");
+    git("-C", remote, "-c", "commit.gpgsign=false", "commit", "-am", "Selected first version");
+    const first = git("-C", remote, "rev-parse", "HEAD");
+    synchronize(); // origin/codex/verified-release does not exist.
+    assert.equal(readFileSync(join(source, "version.txt"), "utf8"), "selected first");
+    git("-C", source, "update-ref", `refs/remotes/origin/${branch}`, first);
+    writeFileSync(join(remote, "version.txt"), "selected latest");
+    git("-C", remote, "-c", "commit.gpgsign=false", "commit", "-am", "Selected latest version");
+    synchronize(); // The main-only fetch mapping leaves the manually created ref stale.
+    assert.equal(readFileSync(join(source, "version.txt"), "utf8"), "selected latest");
+    assert.equal(git("-C", source, "rev-parse", `origin/${branch}`), first);
+    assert.equal(git("-C", source, "rev-parse", "origin/main"), main);
+    assert.deepEqual(readdirSync(scratch).filter(name => name.startsWith("chessalive-source.")), []);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
 test("source sync fallback preserves the image cache while deleting stale files", (t) => {
   if (spawnSync("rsync", ["--version"]).error?.code === "ENOENT") {
     t.skip("rsync is unavailable on this test host");

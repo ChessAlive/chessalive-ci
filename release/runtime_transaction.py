@@ -399,16 +399,22 @@ def stage_release(platform, stage, slot):
     release = {"id": release_id, "slot": slot, "port": 8081 if slot == "blue" else 8082, "protocol": 1}
     directory = platform.release_dir(release)
     directory.mkdir()
-    for name in ("chessd", "chessd-migrate", "chessd.service"):
-        shutil.copyfile(stage / name, directory / name)
-        (directory / name).chmod(0o755 if not name.endswith(".service") else 0o644)
-    extract(stage / "data.tar.gz", directory / "packages/data")
-    if (stage / "web.tar.gz").exists():
-        extract(stage / "web.tar.gz", directory / "web")
-    else:
-        shutil.copytree(platform.root / "web", directory / "web", copy_function=os.link)
-    manifest(directory, metadata)
-    archive_client(directory, platform.root / "client-releases")
+    try:
+        for name in ("chessd", "chessd-migrate", "chessd.service"):
+            shutil.copyfile(stage / name, directory / name)
+            (directory / name).chmod(0o755 if not name.endswith(".service") else 0o644)
+        extract(stage / "data.tar.gz", directory / "packages/data")
+        if (stage / "web.tar.gz").exists():
+            extract(stage / "web.tar.gz", directory / "web")
+        else:
+            shutil.copytree(platform.root / "web", directory / "web", copy_function=os.link)
+        manifest(directory, metadata)
+        archive_client(directory, platform.root / "client-releases")
+    except Exception:
+        # Only this newly created directory is ours. It has not yet been returned to
+        # the handoff coordinator, published to a slot, or referenced by a journal.
+        shutil.rmtree(directory)
+        raise
     return release
 
 
@@ -416,13 +422,17 @@ def capture_legacy(platform):
     release = {"id": "legacy-" + time.strftime("%Y%m%dt%H%M%Sz", time.gmtime()), "slot": "legacy", "port": 8080, "protocol": 0}
     directory = platform.release_dir(release)
     directory.mkdir()
-    for name in ("chessd", "chessd-migrate"):
-        os.link((platform.root / "bin" / name).resolve(), directory / name)
-    shutil.copyfile("/etc/systemd/system/chessd.service", directory / "chessd.service")
-    shutil.copytree((platform.root / "web").resolve(), directory / "web", copy_function=os.link)
-    shutil.copytree((platform.root / "packages/data").resolve(), directory / "packages/data", copy_function=os.link)
-    manifest(directory, {})
-    archive_client(directory, platform.root / "client-releases")
+    try:
+        for name in ("chessd", "chessd-migrate"):
+            os.link((platform.root / "bin" / name).resolve(), directory / name)
+        shutil.copyfile("/etc/systemd/system/chessd.service", directory / "chessd.service")
+        shutil.copytree((platform.root / "web").resolve(), directory / "web", copy_function=os.link)
+        shutil.copytree((platform.root / "packages/data").resolve(), directory / "packages/data", copy_function=os.link)
+        manifest(directory, {})
+        archive_client(directory, platform.root / "client-releases")
+    except Exception:
+        shutil.rmtree(directory)
+        raise
     return release
 
 
@@ -625,10 +635,15 @@ def main():
     state = read_json(platform.state_file)
     current = state.get("current")
     if args.mode == "deploy":
-        if not args.stage or args.stage.parent != Path("/tmp") or not args.stage.name.startswith("chessd-deploy-"):
+        if not args.stage or args.stage.parent != Path("/tmp") or not args.stage.name.startswith("chessd-deploy-") or args.stage.is_symlink() or not args.stage.is_dir():
             raise ValueError("Invalid deployment staging directory")
-        prepare_environment(args.stage)
-        candidate = stage_release(platform, args.stage, "green" if current and current["slot"] == "blue" else "blue")
+        try:
+            prepare_environment(args.stage)
+            candidate = stage_release(platform, args.stage, "green" if current and current["slot"] == "blue" else "blue")
+        finally:
+            # The host controller owns the transaction lock here; all later work
+            # uses the isolated release. SSH loss must not run a competing cleanup.
+            shutil.rmtree(args.stage)
     else:
         candidate = state.get("previous")
         if not current or not candidate:
@@ -652,8 +667,6 @@ def main():
     if current:
         command("systemctl", "disable", "chessd@" + current["slot"])
     platform.prune()
-    if args.mode == "deploy":
-        shutil.rmtree(args.stage)
     mark("rollback_health" if args.mode == "rollback" else "health", "done")
 
 

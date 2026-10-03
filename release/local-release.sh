@@ -40,7 +40,9 @@ sync_source_checkout() {
     say "Updating persistent release checkout"
     git -C "${SOURCE_DIR}" remote set-url origin "${SOURCE_GIT_URL}" 2>/dev/null || git -C "${SOURCE_DIR}" remote add origin "${SOURCE_GIT_URL}"
     git -C "${SOURCE_DIR}" fetch --quiet --prune --depth=1 origin "${SOURCE_GIT_REF}"
-    git -C "${SOURCE_DIR}" reset --hard --quiet "origin/${SOURCE_GIT_REF}"
+    # A single-branch checkout may only map origin/main. FETCH_HEAD identifies the
+    # successful fetch even when the selected branch has no remote-tracking ref.
+    git -C "${SOURCE_DIR}" reset --hard --quiet FETCH_HEAD
     git -C "${SOURCE_DIR}" clean -fd -e node_modules/ -e apps/player-app/dist/ -e 'apps/go-server/chessd-linux-*' -e 'apps/go-server/chessd-migrate-linux-*' >/dev/null
     git -C "${SOURCE_DIR}" rev-parse HEAD > "${SOURCE_COMMIT_FILE}"
     git -C "${SOURCE_DIR}" log -1 --format=%s > "${SOURCE_COMMIT_MESSAGE_FILE}"
