@@ -54,6 +54,27 @@ Open `http://<hyderabad-public-ip>:8787/`. The console displays an in-page passw
 browser username/password alert is used. Enter `BUILD_TRIGGER_TOKEN` and the console creates a
 short-lived HttpOnly session.
 
+## Measurements
+
+Each release records independent step start/end times, total elapsed time and sampled build
+process memory. Skipped steps have no duration. Memory is sampled once a second from the build
+process group and descendants; shared pages may be counted more than once, and brief peaks
+between samples can be missed. The latest run survives a console restart in `.state/`.
+
+The infrastructure panel samples Hyderabad locally and Mumbai through the existing deploy SSH
+connection every ten seconds. It reports CPU counter deltas, `MemAvailable`, filesystem space,
+default-route network counters and rates, and systemd cgroup memory. Service memory and process
+RSS are separately labeled. A failed collection preserves its last timestamp and marks the data
+unavailable rather than showing zero.
+
+OCI information is collected independently on each host every five minutes using its instance
+principal. The two servers belong to separate accounts; their allowances must never be combined.
+Hyderabad uses `python3` and Mumbai uses `/opt/oci-cli-venv/bin/python3`, with the OCI SDK installed.
+Provider measurements retain their own observation time and aggregation window. Consumption
+covers completed UTC days and may lag; NIC traffic is not monthly billable traffic. Provisioning
+quotas are not free-tier allowances. The dashboard only labels a database as free tier when OCI
+reports that status, and does not invent unavailable entitlement balances.
+
 ## Safety boundary
 
 `Release Now` performs code install, tests, ARM64 compilation, web build, atomic deployment, and a

@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { dirname, resolve } from "node:path";
+import { promisify } from "node:util";
 
+import { createResourceMonitor } from "./resource-monitor.mjs";
 import { dashboardHtml, loginHtml } from "./dashboard.mjs";
 import { stepTemplate, emptyMetrics, elapsedMs, applyStepEvent, createLineDecoder, parseStepEvent, sampleProcessMemory, recordMemory, finishSteps } from "./build-metrics.mjs";
 
@@ -42,11 +44,44 @@ const resendFrom = process.env.CHESSALIVE_OTP_FROM || smtpFrom;
 const monitorPaths = (process.env.MONITOR_PATHS || "/,/health,/version,/play,/tactics,/coach")
   .split(",").map(value => value.trim()).filter(Boolean);
 const maxLogBytes = 120_000;
+const execFileAsync = promisify(execFile);
+const rollbackSteps = () => [
+  ['rollback_prepare', 'Check fallback', 'Verify the complete previous release'],
+  ['rollback_restore', 'Restore previous release', 'Restore the app, server, data and service settings together'],
+  ['rollback_health', 'Verify production', 'Check health and recover the current release if needed'],
+].map(([id, label, detail]) => ({ id, label, detail, status: 'pending', startedAt: null, finishedAt: null, durationMs: null, peakRssBytes: null }));
+let rollback = { available: false, checkedAt: null, reason: 'Checking the previous release' };
+let rollbackRefresh = null;
+function refreshRollback() {
+  if (rollbackRefresh) return rollbackRefresh;
+  rollbackRefresh = (async () => {
+    try {
+      const { stdout } = await execFileAsync('bash', ['./release/rollback-chessd.sh', '--status'], {
+        cwd: root, timeout: 15000, maxBuffer: 100000,
+        env: { ...process.env, CI_ROOT: root, SOURCE_ROOT: sourceDir, PUBLIC_URL: productionUrl },
+      });
+      const result = JSON.parse(stdout);
+      if (typeof result.available !== 'boolean') throw new Error('Invalid rollback status');
+      rollback = { ...result, checkedAt: new Date().toISOString() };
+    } catch { rollback = { available: false, checkedAt: new Date().toISOString(), reason: 'The previous release could not be verified' }; }
+    finally { rollbackRefresh = null; }
+  })();
+  return rollbackRefresh;
+}
 
 const state = {
   release: { status: "idle", runId: 0, startedAt: null, finishedAt: null, exitCode: null, log: "", steps: stepTemplate(), metrics: emptyMetrics(), child: null },
   monitor: { level: "unknown", checkedAt: null, latencyMs: null, summary: "Waiting for the first production check", checks: [], production: null, previousLevel: "unknown" },
 };
+const resources = createResourceMonitor({
+  enabled: process.env.BUILD_RESOURCE_MONITOR_ENABLED !== 'no',
+  remoteHost: process.env.DEPLOY_HOST || '144.24.117.171',
+  remoteUser: process.env.DEPLOY_USER || 'ubuntu',
+  remoteKey: process.env.DEPLOY_SSH_KEY || undefined,
+  intervalMs: process.env.BUILD_RESOURCE_MONITOR_INTERVAL_MS,
+  cloudEnabled: process.env.BUILD_CLOUD_MONITOR_ENABLED !== 'no',
+  cloudIntervalMs: process.env.BUILD_CLOUD_MONITOR_INTERVAL_MS,
+});
 const sessions = new Map();
 let monitorIncidentActive = false;
 const sessionCookie = "chessalive_ci_session";
@@ -143,10 +178,13 @@ function updateStepFromLine(line) {
 
 function publicState() {
   const production = state.monitor.production || {};
+  const deployedCommit = rollback.current ? (rollback.current.commitHash || 'unknown') : (state.release.kind === 'rollback' ? 'unknown' : commitHash);
   return {
     serverTime: new Date().toISOString(),
-    release: { status: state.release.status, runId: state.release.runId, startedAt: state.release.startedAt, finishedAt: state.release.finishedAt, exitCode: state.release.exitCode, durationMs: elapsedMs(state.release.startedAt, state.release.finishedAt), metrics: state.release.metrics, steps: state.release.steps.map(item => ({ ...item, durationMs: item.startedAt ? elapsedMs(item.startedAt, item.finishedAt) : item.durationMs })), log: state.release.log.slice(-14_000) },
-    production: { url: productionUrl, version: production.version || null, builtAt: production.builtAt || null, commitHash, commitMessage, commitDate, gitLink: commitHash !== "unknown" ? `${gitUrl}/commit/${commitHash}` : gitUrl },
+    resources: resources.publicState(),
+    rollback,
+    release: { kind: state.release.kind || 'build', status: state.release.status, runId: state.release.runId, startedAt: state.release.startedAt, finishedAt: state.release.finishedAt, exitCode: state.release.exitCode, durationMs: elapsedMs(state.release.startedAt, state.release.finishedAt), metrics: state.release.metrics, steps: state.release.steps.map(item => ({ ...item, durationMs: item.startedAt ? elapsedMs(item.startedAt, item.finishedAt) : item.durationMs })), log: state.release.log.slice(-14_000) },
+    production: { url: productionUrl, version: production.version || null, builtAt: production.builtAt || null, commitHash: deployedCommit, commitMessage: rollback.current?.commitMessage || (deployedCommit === 'unknown' ? 'Deployed source metadata unavailable' : commitMessage), commitDate: rollback.current ? rollback.current.commitDate : commitDate, gitLink: deployedCommit !== "unknown" ? `${gitUrl}/commit/${deployedCommit}` : gitUrl },
     monitor: { level: state.monitor.level, checkedAt: state.monitor.checkedAt, latencyMs: state.monitor.latencyMs, summary: state.monitor.summary, checks: state.monitor.checks },
     admins,
     notifications: {
@@ -209,14 +247,15 @@ async function sendAdminEmail(subject, title, summary, extraHtml = "") {
   } catch (error) { appendLog(`[notify] Admin email failed: ${error.message}\n`); return false; }
 }
 
-function startBuild() {
+function startBuild(kind = 'build') {
   if (state.release.child) return false;
   refreshCommitMetadata();
-  state.release = { status: 'running', runId: state.release.runId + 1, startedAt: new Date().toISOString(), finishedAt: null, exitCode: null, log: `Starting full release #${state.release.runId + 1} from ${sourceDir}\n`, steps: stepTemplate(), metrics: emptyMetrics(), child: null };
-  const child = spawn("bash", ["./release/local-release.sh"], {
+  const isRollback = kind === 'rollback';
+  state.release = { kind, status: 'running', runId: state.release.runId + 1, startedAt: new Date().toISOString(), finishedAt: null, exitCode: null, log: isRollback ? `Restoring the previous retained release on Mumbai\n` : `Starting full release #${state.release.runId + 1} from ${sourceDir}\n`, steps: isRollback ? rollbackSteps() : stepTemplate(), metrics: emptyMetrics(), child: null };
+  const child = spawn("bash", [isRollback ? './release/rollback-chessd.sh' : './release/local-release.sh'], {
     cwd: root,
     detached: true,
-    env: { ...process.env, CHESSALIVE_PROGRESS: "yes", SOURCE_DIR: sourceDir, LOCAL_DEPLOY: "yes", PUBLIC_URL: productionUrl, SKIP_INSTALL: "no", SKIP_TESTS: "no", SKIP_FULL_TESTS: process.env.BUILD_SKIP_FULL_TESTS || "no", SKIP_WEB_SETUP: "yes", SKIP_BUDGETS: process.env.BUILD_SKIP_BUDGETS || "no", SKIP_ASSETS: "yes", SKIP_CONTENT: "yes", SKIP_DEPLOY: "no" },
+    env: { ...process.env, CHESSALIVE_PROGRESS: "yes", SOURCE_DIR: sourceDir, SOURCE_ROOT: sourceDir, CI_ROOT: root, LOCAL_DEPLOY: isRollback ? 'no' : 'yes', PUBLIC_URL: productionUrl, SKIP_INSTALL: "no", SKIP_TESTS: "no", SKIP_FULL_TESTS: process.env.BUILD_SKIP_FULL_TESTS || "no", SKIP_WEB_SETUP: "yes", SKIP_BUDGETS: process.env.BUILD_SKIP_BUDGETS || "no", SKIP_ASSETS: "yes", SKIP_CONTENT: "yes", SKIP_DEPLOY: "no" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   state.release.child = child;
@@ -255,7 +294,10 @@ function startBuild() {
     finishSteps(state.release.steps, code === 0);
     appendLog(`\nFinished with ${signal ? `signal ${signal}` : `exit code ${code ?? 'unknown'}`}.\n`);
     persistRelease();
-    void sendAdminEmail(code === 0 ? `ChessAlive release #${state.release.runId} deployed` : `ChessAlive release #${state.release.runId} failed`, code === 0 ? "Release deployed successfully" : "Release needs attention", code === 0 ? `The requested source commit is live on Mumbai production. ${releaseCommitSummary()}` : `The release did not complete, so the requested source commit was not deployed. Exit code: ${code ?? "unknown"}. ${releaseCommitSummary()}`, releaseCommitHtml(code === 0));
+    void refreshRollback();
+    void monitorProduction();
+    if (isRollback) void sendAdminEmail(code === 0 ? 'ChessAlive rollback completed' : 'ChessAlive rollback needs attention', code === 0 ? 'Previous release restored' : 'Rollback did not complete', code === 0 ? 'The retained previous release is live on Mumbai and passed the health check.' : `Rollback did not complete. Review the operation log. Exit code: ${code ?? 'unknown'}.`);
+    else void sendAdminEmail(code === 0 ? `ChessAlive release #${state.release.runId} deployed` : `ChessAlive release #${state.release.runId} failed`, code === 0 ? "Release deployed successfully" : "Release needs attention", code === 0 ? `The requested source commit is live on Mumbai production. ${releaseCommitSummary()}` : `The release did not complete, so the requested source commit was not deployed. Exit code: ${code ?? "unknown"}. ${releaseCommitSummary()}`, releaseCommitHtml(code === 0));
   });
   return true;
 }
@@ -315,9 +357,18 @@ const server = createServer(async (request, response) => {
   if (url.pathname === "/" && request.method === "GET") { response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }); return response.end(dashboardHtml); }
   if (url.pathname === "/api/status" && request.method === "GET") return sendJson(response, 200, publicState());
   if (url.pathname === "/api/build" && request.method === "POST") { if (!startBuild()) return sendJson(response, 409, { error: "a release is already running", ...publicState() }); return sendJson(response, 202, publicState()); }
+  if (url.pathname === '/api/rollback' && request.method === 'POST') {
+    if (state.release.child) return sendJson(response, 409, { error: 'a release is already running', ...publicState() });
+    await refreshRollback();
+    if (!rollback.available) return sendJson(response, 409, { error: rollback.reason || 'No complete previous release is available', ...publicState() });
+    if (!startBuild('rollback')) return sendJson(response, 409, { error: 'a release is already running', ...publicState() });
+    return sendJson(response, 202, publicState());
+  }
   sendJson(response, 404, { error: "not found" });
 });
 
 if (!basicPassword) console.error("BUILD_TRIGGER_TOKEN is not configured; console access is disabled");
 server.listen(port, host, () => console.log(`ChessAlive release console listening on http://${host}:${server.address().port}`));
+resources.start();
+void refreshRollback(); setInterval(() => void refreshRollback(), 60000).unref();
 void monitorProduction(); setInterval(() => void monitorProduction(), MONITOR_INTERVAL_MS);
