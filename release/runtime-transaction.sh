@@ -10,6 +10,15 @@ if [[ "${MODE}" == deploy ]]; then
   for name in runtime_transaction.py release_store.py handoff.py; do
     install -m 0644 "${STAGE}/${name}" "${TOOLS}/${name}"
   done
+  # Host packages the application needs, installed by every deploy before the candidate starts,
+  # so a new or rebuilt host never lacks them (no one-time host setup to forget). Idempotent and
+  # never fatal: without Stockfish, chessd keeps Coach V5 off and /coach shows the previous Coach.
+  # The slot unit points chessd at it (CHESSALIVE_COACH5_ENGINE=/usr/games/stockfish).
+  if [[ ! -x /usr/games/stockfish ]] && command -v apt-get >/dev/null 2>&1; then
+    { DEBIAN_FRONTEND=noninteractive apt-get install -y -q stockfish >/dev/null 2>&1 \
+      || { apt-get update -q >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y -q stockfish >/dev/null 2>&1; }; } \
+      || echo "! stockfish could not be installed; Coach V5 stays off until it is" >&2
+  fi
 fi
 if [[ ! -f "${TOOLS}/runtime_transaction.py" ]]; then
   if [[ "${MODE}" == status ]]; then
