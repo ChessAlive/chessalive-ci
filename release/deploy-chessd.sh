@@ -21,12 +21,14 @@ CI_ROOT="${CI_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 SOURCE_ROOT="${SOURCE_ROOT:-/opt/chessalive}"
 source "${CI_ROOT}/release/progress.sh"
 DEPLOY_PROGRESS_LOG=""
+WEB_BASELINE=""
 deploy_progress_exit() {
   local status="$1"
   if [[ -n "${DEPLOY_PROGRESS_LOG}" ]]; then
     progress_adopt_log "${DEPLOY_PROGRESS_LOG}"
     rm -f "${DEPLOY_PROGRESS_LOG}"
   fi
+  [[ -z "${WEB_BASELINE}" ]] || rm -f "${WEB_BASELINE}"
   progress_on_exit "${status}"
 }
 trap 'deploy_progress_exit "$?"' EXIT
@@ -121,7 +123,7 @@ copy_to_host "${BINARY_SRC}" "${STAGE}/chessd"
 copy_to_host "${GATEWAY_SRC}" "${STAGE}/chessgate"
 copy_to_host "${UNIT_SRC}" "${STAGE}/chessd.service"
 copy_to_host "${MIGRATE_SRC}" "${STAGE}/chessd-migrate"
-for name in runtime_transaction.py release_store.py handoff.py; do
+for name in runtime_transaction.py release_store.py handoff.py web_archive.py; do
   copy_to_host "${CI_ROOT}/release/${name}" "${STAGE}/${name}"
 done
 for name in chessgate.service chessalive-runtime.conf; do
@@ -165,20 +167,31 @@ if [[ "${SKIP_WEB}" != "yes" ]]; then
     copy_to_host "${PREBUILT_WEB_ARCHIVE}" "${STAGE}/web.tar.gz"
   else
     [[ -d "${WEB_SRC}" ]] || die "web bundle not found at ${WEB_SRC}"
-    # Stream directly to production; Hyderabad need not hold a second multi-GB bundle.
-    echo 'Streaming the web bundle to the production staging directory'
-    COPYFILE_DISABLE=1 tar --no-xattrs -czf - -C "${WEB_SRC}" . \
+    # The index describes the complete new tree, so deleted assets stay deleted.
+    # Mumbai verifies reused bytes from this exact retained release before linking
+    # them into an isolated candidate. No active file is overwritten by transfer.
+    WEB_BASELINE="$(mktemp "${TMPDIR:-/tmp}/chessalive-web-baseline.XXXXXX")"
+    printf -v baseline_command 'python3 %q baseline %q' "${STAGE}/web_archive.py" "${REMOTE_ROOT}"
+    remote "${baseline_command}" > "${WEB_BASELINE}"
+    echo 'Streaming changed web files to the production staging directory'
+    transfer_started="${SECONDS}"
+    python3 "${CI_ROOT}/release/web_archive.py" pack "${WEB_SRC}" "${WEB_BASELINE}" \
       | remote "cat > '${STAGE}/web.tar.gz'"
+    echo "[deploy-timing] web transfer: $(( SECONDS - transfer_started ))s"
+    rm -f "${WEB_BASELINE}"
+    WEB_BASELINE=""
   fi
 fi
 
 # ── Install + health gate ────────────────────────────────────────────────────────────────────────
 say "Handing traffic and game state to the verified release"
+install_started="${SECONDS}"
 DEPLOY_PROGRESS_LOG="$(mktemp "${TMPDIR:-/tmp}/chessalive-deploy-progress.XXXXXX")"
 # Pass values as shell-quoted arguments rather than interpolating an SSH command.
 printf -v remote_command 'sudo -n env MODE=deploy STAGE=%q REMOTE_ROOT=%q SERVICE=%q HEALTH_URL=%q HEALTH_RETRIES=%q HEALTH_INTERVAL=%q SKIP_WEB=%q CHESSALIVE_PROGRESS=%q bash -s' \
   "${STAGE}" "${REMOTE_ROOT}" "${SERVICE}" "${HEALTH_URL}" "${HEALTH_RETRIES}" "${HEALTH_INTERVAL}" "${SKIP_WEB}" "${CHESSALIVE_PROGRESS:-}"
 remote "${remote_command}" < "${CI_ROOT}/release/runtime-transaction.sh" | tee "${DEPLOY_PROGRESS_LOG}"
+echo "[deploy-timing] install and health transaction: $(( SECONDS - install_started ))s"
 
 progress_adopt_log "${DEPLOY_PROGRESS_LOG}"
 rm -f "${DEPLOY_PROGRESS_LOG}"

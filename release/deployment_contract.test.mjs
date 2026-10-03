@@ -115,7 +115,7 @@ test("single-branch source sync builds the fetched non-main branch despite missi
   }
 });
 
-test("source sync fallback preserves the image cache while deleting stale files", (t) => {
+test("source sync fallback preserves image and compression caches while deleting stale files", (t) => {
   if (spawnSync("rsync", ["--version"]).error?.code === "ENOENT") {
     t.skip("rsync is unavailable on this test host");
     return;
@@ -131,15 +131,19 @@ test("source sync fallback preserves the image cache while deleting stale files"
     const source = join(scratch, "source");
     const destination = join(scratch, "destination");
     const cache = join(destination, ".cache/squoosh-webp-v1");
+    const compressionCache = join(destination, ".cache/web-compression-v1");
     mkdirSync(source);
     mkdirSync(cache, { recursive: true });
+    mkdirSync(compressionCache, { recursive: true });
     writeFileSync(join(cache, "cached.webp"), "compressed-once");
+    writeFileSync(join(compressionCache, "cached.br"), "compressed-once");
     writeFileSync(join(destination, "stale-source.js"), "remove me");
     writeFileSync(join(destination, ".cache", "unrelated.tmp"), "remove me");
 
     const result = spawnSync("rsync", ["-a", "--delete", ...excludes, `${source}/`, `${destination}/`], { encoding: "utf8" });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(readFileSync(join(cache, "cached.webp"), "utf8"), "compressed-once");
+    assert.equal(readFileSync(join(compressionCache, "cached.br"), "utf8"), "compressed-once");
     assert.equal(existsSync(join(destination, "stale-source.js")), false);
     assert.equal(existsSync(join(destination, ".cache", "unrelated.tmp")), false);
   } finally {

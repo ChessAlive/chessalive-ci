@@ -97,6 +97,10 @@ def extract(archive, destination):
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
     with tarfile.open(archive, "r:gz") as source:
+        first = source.next()
+        if first and first.name == ".chessalive-web-delta.json":
+            _extract_web_delta(source, first, destination)
+            return
         for item in source:
             target = destination / item.name
             if not target.resolve().is_relative_to(destination.resolve()):
@@ -110,6 +114,71 @@ def extract(archive, destination):
                 target.chmod(0o644)
             else:
                 raise ValueError("Build archives cannot contain links or special files")
+
+
+def _delta_files(value):
+    if not isinstance(value, dict):
+        raise ValueError("Invalid web transfer file inventory")
+    for name, checksum in value.items():
+        if (not isinstance(name, str) or not name or name.startswith("/") or
+                posixpath.normpath(name) != name or ".." in name.split("/") or
+                "\\" in name or "\0" in name or name == ".chessalive-web-delta.json" or
+                not isinstance(checksum, str) or not re.fullmatch(r"[a-f0-9]{64}", checksum)):
+            raise ValueError("Invalid web transfer file inventory")
+    return value
+
+
+def _extract_web_delta(source, first, destination):
+    # Resolve only a retained release beside this new release. No caller-selected
+    # absolute path, active symlink, or copy of the old tree is trusted as a baseline.
+    if not first.isfile() or first.size > 32 * 1024 * 1024:
+        raise ValueError("Invalid web transfer index")
+    plan = json.load(source.extractfile(first))
+    if not isinstance(plan, dict):
+        raise ValueError("Invalid web transfer index")
+    base_id = plan.get("baseRelease", "")
+    if plan.get("schemaVersion") != 1 or not isinstance(base_id, str) or not re.fullmatch(r"release-[a-z0-9-]+", base_id):
+        raise ValueError("Invalid web transfer baseline")
+    if destination.name != "web" or destination.parent.parent.name != "releases" or any(destination.iterdir()):
+        raise ValueError("Web transfer requires an empty isolated release directory")
+    base = destination.parent.parent / base_id
+    if base.is_symlink() or (base / "web").is_symlink() or base.resolve() == destination.parent.resolve():
+        raise ValueError("Invalid web transfer baseline")
+    metadata = read_json(base / "manifest.json")
+    if metadata.get("schemaVersion") != 1 or metadata.get("complete") is not True or not isinstance(metadata.get("files"), dict):
+        raise ValueError("Web transfer baseline is unavailable")
+    files = _delta_files(plan.get("files"))
+    reused = _delta_files(plan.get("reused"))
+    for name, checksum in reused.items():
+        original = base / "web" / name
+        if (files.get(name) != checksum or metadata.get("files", {}).get("web/" + name) != checksum or
+                not original.resolve().is_relative_to((base / "web").resolve()) or original.is_symlink() or
+                not original.is_file() or digest(original) != checksum):
+            raise ValueError("Web transfer baseline checksum mismatch")
+        target = destination / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.link(original, target)
+        except OSError:
+            shutil.copyfile(original, target)
+    received = set()
+    for item in source:
+        # tarfile iteration includes the already-read first member.
+        if item is first:
+            continue
+        name = item.name
+        if not item.isfile() or name not in files or name in reused or name in received:
+            raise ValueError("Unexpected web transfer archive entry")
+        target = destination / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with source.extractfile(item) as src, target.open("wb") as dst:
+            shutil.copyfileobj(src, dst)
+        target.chmod(0o644)
+        if digest(target) != files[name]:
+            raise ValueError("Web transfer payload checksum mismatch")
+        received.add(name)
+    if received != files.keys() - reused.keys():
+        raise ValueError("Web transfer payload is incomplete")
 
 
 _CONTENT_HASH_NAME = re.compile(r"(?:^|[./_-])[a-f0-9]{16,}(?:[./_-]|$)", re.I)

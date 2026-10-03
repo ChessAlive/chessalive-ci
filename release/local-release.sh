@@ -62,6 +62,7 @@ sync_source_checkout() {
     --exclude node_modules/ \
     --exclude apps/player-app/dist/ \
     --exclude '/.cache/squoosh-webp-v1/' \
+    --exclude '/.cache/web-compression-v1/' \
     --exclude 'apps/go-server/chessd-linux-*' \
     --exclude 'apps/go-server/chessd-migrate-linux-*' \
     "${checkout}/repo/" "${SOURCE_DIR}/"

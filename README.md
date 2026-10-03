@@ -21,6 +21,19 @@ The release lane deliberately skips object-storage asset mirroring and content p
 lanes can mutate uploaded content or the live catalog/database and are not part of a code release.
 The deploy still ships the read-only puzzle data files required by the running server.
 
+The web build stages a production public subset while preserving the full source asset library.
+The current Coach keeps its existing welcome recording; retired Coach artwork and animation
+libraries are excluded. Image dependency scanning covers every exported tab, linked catalogs,
+PWA icons, model textures and server previews, rather than relying on which screens a guest visits.
+Source-keyed image validation and compression caches survive source synchronization.
+
+Web transfer compares the candidate with the checksum manifest of one exact retained Mumbai
+release. It streams changed files plus a complete inventory; installation verifies unchanged
+bytes before linking them into the isolated candidate. Deleted files are omitted, and checksum
+or missing-baseline failures stop preparation before traffic handoff. First installs and explicitly
+provided full archives remain supported. Logs report transfer and install/health durations
+separately; cached builds and small releases do not upload the entire media library again.
+
 ## Repository layout
 
 - `release/` — authenticated web console, local build pipeline, atomic Mumbai deploy, and systemd unit
