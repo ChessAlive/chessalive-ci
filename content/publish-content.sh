@@ -238,7 +238,7 @@ say "Prod inventory"
 INVENTORY="${WORK}/prod-inventory.txt"
 # Paths relative to the uploads dir, recursively, so a staged sub-directory name (thumbs/x.png)
 # compares like-for-like with the manifest.
-remote "find '${UPLOAD_DIR}' -type f -printf '%P\\n'" | sort > "${INVENTORY}"
+remote "sudo -n find '${UPLOAD_DIR}' -type f -printf '%P\\n'" | sort > "${INVENTORY}"
 echo "$(grep -c . "${INVENTORY}") files in ${UPLOAD_DIR}"
 
 say "Content gate against the inventory"

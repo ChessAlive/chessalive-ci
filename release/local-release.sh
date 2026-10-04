@@ -207,6 +207,16 @@ else
   progress_mark content skipped
 fi
 
+# Publishing stays separate, but a production code release must prove that the
+# exact required motions, bodies and cast bindings are already publicly available.
+# A healthy app process alone does not prove that capture previews can play.
+if [[ "${SKIP_DEPLOY}" != yes ]]; then
+  step_run content_readiness env SOURCE_ROOT="${SOURCE_DIR}" PUBLIC_URL="${PUBLIC_URL}" \
+    node "${CI_ROOT_DIR}/release/content-readiness.mjs"
+else
+  progress_mark content_readiness skipped
+fi
+
 if [[ "${SKIP_DEPLOY}" == yes ]]; then
   say 'Build complete; deployment skipped (SKIP_DEPLOY=yes)'
   progress_mark deploy skipped

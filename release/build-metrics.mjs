@@ -19,6 +19,7 @@ export const STEP_DEFINITIONS = [
   ['bundle', 'Bundle checks', 'Validate production bundle size'],
   ['assets', 'Asset publishing', 'Optional asset lane'],
   ['content', 'Content publishing', 'Optional content lane'],
+  ['content_readiness', 'Verify animation content', 'Require published motion bindings and accessible model files'],
   ['deploy', 'Deploy to Mumbai', 'Upload and atomically install the release'],
   ['health', 'Verify production', 'Check the service and roll back if unhealthy'],
 ];

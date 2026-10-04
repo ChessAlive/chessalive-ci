@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const releaseDir = path.dirname(fileURLToPath(import.meta.url));
 const progressScript = path.join(releaseDir, 'progress.sh');
 const localRelease = path.join(releaseDir, 'local-release.sh');
-const allSteps = ['prepare', 'install', 'typecheck', 'lint', 'tests', 'infra', 'audit', 'narration', 'browser', 'server', 'migrate', 'web', 'performance', 'bundle', 'assets', 'content', 'deploy', 'health'];
+const allSteps = ['prepare', 'install', 'typecheck', 'lint', 'tests', 'infra', 'audit', 'narration', 'browser', 'server', 'migrate', 'web', 'performance', 'bundle', 'assets', 'content', 'content_readiness', 'deploy', 'health'];
 const marker = (id, status) => ({ id, status });
 const events = result => result.stdout.split('\n').filter(line => line.startsWith('@@CHESSALIVE_STEP ')).map(line => JSON.parse(line.slice('@@CHESSALIVE_STEP '.length)));
 
@@ -45,7 +45,7 @@ test('release emits every executed/skipped step and preserves independent parall
   const observed = events(result);
   for (const id of allSteps) {
     const statuses = observed.filter(event => event.id === id).map(event => event.status);
-    assert.deepEqual(statuses, ['assets', 'content', 'deploy', 'health'].includes(id) ? ['skipped'] : ['running', 'done'], id);
+    assert.deepEqual(statuses, ['assets', 'content', 'content_readiness', 'deploy', 'health'].includes(id) ? ['skipped'] : ['running', 'done'], id);
   }
   assert.ok(observed.findIndex(event => event.id === 'migrate' && event.status === 'done') < observed.findIndex(event => event.id === 'server' && event.status === 'done'));
   assert.ok(observed.findIndex(event => event.id === 'server' && event.status === 'done') < observed.findIndex(event => event.id === 'browser' && event.status === 'done'));
@@ -106,4 +106,13 @@ test('rollback reconciliation retains the actual phase after transport loss', t 
   const result = spawnSync('bash', ['-c', 'set -euo pipefail; source "$1"; trap \'progress_on_exit "$?"\' EXIT; progress_mark rollback_prepare running; progress_adopt_log "$2"; exit 255', 'test', progressScript, log], { env: f.env, encoding: 'utf8' });
   assert.equal(result.status, 255, result.stderr);
   assert.deepEqual(events(result), [marker('rollback_prepare', 'running'), marker('rollback_health', 'failed')]);
+});
+
+
+test('missing published animation content fails before deployment even when content publishing is skipped', t => {
+  const f = fixture(t);
+  const result = f.run({ SKIP_DEPLOY: 'no', FAIL_COMMAND: path.join(releaseDir, 'content-readiness.mjs') });
+  assert.equal(result.status, 37, result.stderr);
+  assert.deepEqual(events(result).filter(event => event.id === 'content_readiness'), [marker('content_readiness', 'running'), marker('content_readiness', 'failed')]);
+  assert.ok(!events(result).some(event => event.id === 'deploy'));
 });

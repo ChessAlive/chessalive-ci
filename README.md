@@ -19,6 +19,22 @@ Hyderabad host is the only place that builds, releases, monitors, and sends oper
 
 The release lane deliberately skips object-storage asset mirroring and content publishing. Those
 lanes can mutate uploaded content or the live catalog/database and are not part of a code release.
+Before deployment, a read-only content readiness gate compares the source's required motion
+names, model versions and ceremony bindings with the public production catalog, then checks every
+required model URL. A code release fails when reviewed content has not been published; an app
+health response alone is insufficient. Publish approved content separately with:
+
+```sh
+SOURCE_ROOT=/opt/chessalive OCI_HOST=144.24.117.171 OCI_USER=ubuntu \
+  SSH_KEY=/home/opc/.ssh/chessalive-deploy MIGRATE_BIN=remote CONTENT_PRUNE=report \
+  bash content/publish-content.sh --dry-run
+# After reviewing the plan, run the same command without --dry-run.
+```
+
+The publisher installs immutable, checksum-verified model files before updating the catalog,
+checks revision conflicts, and proves the public revision, ETag and a no-op re-merge. Report pruning
+preserves previous model versions. Its inventory uses non-interactive sudo to traverse protected
+upload subdirectories without changing their permissions. Code releases do not publish or prune.
 The deploy still ships the read-only puzzle data files required by the running server.
 
 The web build stages a production public subset while preserving the full source asset library.
