@@ -1,6 +1,7 @@
 // A code release must never advertise motions whose content was not published.
 // This gate is read-only; publishing remains a separate, guarded operation.
 import { readFile } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -71,7 +72,7 @@ export async function verifyContent({ sourceRoot, publicUrl, fetchImpl = fetch }
   return { revision: prod.appStateRevision, worlds: slices.length, models: uploads.length };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   try {
     const result = await verifyContent({ sourceRoot: process.env.SOURCE_ROOT ?? '/opt/chessalive', publicUrl: process.env.PUBLIC_URL ?? 'https://chessalive.com' });
     console.log(`Content readiness passed: revision ${result.revision}, ${result.worlds} worlds, ${result.models} required models publicly available`);

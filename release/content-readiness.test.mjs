@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { requiredContent, verifyContent } from './content-readiness.mjs';
 
 const slice = {
@@ -62,4 +64,15 @@ test('live catalog and accessible models pass with read-only requests', async t 
   const f = await fixture(t, new Response(null, { headers: { 'content-type': 'model/gltf-binary', 'content-length': '64' } }));
   assert.deepEqual(await verifyContent(f), { revision: 22, worlds: 1, models: 1 });
   assert.deepEqual(f.calls.map(call => call[1]), ['GET', 'HEAD']);
+});
+
+
+test('CLI invoked through a symlink still executes the gate and fails on missing source content', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'chessalive-content-cli-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const cli = join(root, 'gate.mjs');
+  await symlink(fileURLToPath(new URL('./content-readiness.mjs', import.meta.url)), cli);
+  const result = spawnSync(process.execPath, [cli], { env: { ...process.env, SOURCE_ROOT: root }, encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /catalog.config.json/);
 });
