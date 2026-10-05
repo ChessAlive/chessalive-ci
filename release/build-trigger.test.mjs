@@ -36,7 +36,7 @@ test('authenticated console measures operations, serializes builds and rollbacks
     await mkdir(join(root, 'release/branding'), { recursive: true });
     for (const file of ['chessalive-logo.png', 'favicon.png']) await copyFile(new URL('branding/' + file, import.meta.url), join(root, 'release/branding', file));
     for (const file of ['build-trigger.mjs', 'build-metrics.mjs', 'dashboard.mjs', 'monitor-policy.mjs', 'resource-monitor.mjs', 'resource-snapshot.py', 'cloud-resource-snapshot.py']) await copyFile(new URL(file, import.meta.url), join(root, 'release', file));
-    await writeFile(join(root, 'release/local-release.sh'), `#!/usr/bin/env bash\nset -eu\nprintf '@@CHESSALIVE_STEP {"id":"web","status":"running"}\\n'\nnode -e 'const bytes=Buffer.alloc(32*1024*1024, 1);setTimeout(()=>console.log(bytes.length),2200)'\nprintf '@@CHESSALIVE_STEP {"id":"web","status":"done"}\\n'\n`);
+    await writeFile(join(root, 'release/local-release.sh'), `#!/usr/bin/env bash\nset -eu\nprintf 'content-policy=%s\\n' "$SKIP_CONTENT"\nprintf '@@CHESSALIVE_STEP {"id":"web","status":"running"}\\n'\nnode -e 'const bytes=Buffer.alloc(32*1024*1024, 1);setTimeout(()=>console.log(bytes.length),2200)'\nprintf '@@CHESSALIVE_STEP {"id":"web","status":"done"}\\n'\n`);
     await writeFile(join(root, 'rollback-status.json'), JSON.stringify({ available: false, reason: 'No complete fallback', current: { commitHash: 'aaaaaaa', commitMessage: 'Current release' } }));
     await writeFile(join(root, 'release/rollback-chessd.sh'), `#!/usr/bin/env bash
 set -eu
@@ -60,6 +60,7 @@ printf '%s' '{"available":true,"current":{"commitHash":"bbbbbbb","commitMessage"
     let data;
     for (let i = 0; i < 100; i++) { data = await status(); if (data.release.status !== 'running') break; await pause(50); }
     assert.equal(data.release.status, 'succeeded');
+    assert.ok(data.release.log.includes('content-policy=no'));
     assert.ok(data.release.durationMs >= 2100);
     assert.ok(data.release.metrics.peakRssBytes >= 32 * 1024 * 1024);
     assert.ok(data.release.metrics.samples.length >= 2);

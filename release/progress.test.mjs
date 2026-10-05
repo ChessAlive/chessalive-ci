@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -34,7 +34,7 @@ exit 0
 `;
   for (const name of ['node', 'npm', 'npx', 'go', 'file']) writeFileSync(path.join(bin, name), script, { mode: 0o755 });
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, COMMAND_LOG: commandLog, SOURCE_DIR: source, SOURCE_COMMIT_FILE: path.join(source, '.source-commit'), SYNC_SOURCE: 'no', BUILD_COMMIT_HASH: 'unknown', BUILD_ARCH: 'amd64', LOCAL_DEPLOY: 'yes', CHESSALIVE_PROGRESS: 'yes', SKIP_TESTS: 'no', SKIP_FULL_TESTS: 'no', SKIP_INSTALL: 'no', SKIP_WEB: 'no', SKIP_WEB_SETUP: 'no', SKIP_BUDGETS: 'no', SKIP_DEPLOY: 'yes', SKIP_ASSETS: 'yes', SKIP_CONTENT: 'yes', FAIL_COMMAND: '' };
-  const run = (overrides = {}) => spawnSync('bash', [localRelease], { env: { ...env, ...overrides }, encoding: 'utf8', timeout: 10000 });
+  const run = (overrides = {}, script = localRelease) => spawnSync('bash', [script], { env: { ...env, ...overrides }, encoding: 'utf8', timeout: 10000 });
   return { root, bin, source, env, run, commandLog };
 }
 
@@ -115,4 +115,33 @@ test('missing published animation content fails before deployment even when cont
   assert.equal(result.status, 37, result.stderr);
   assert.deepEqual(events(result).filter(event => event.id === 'content_readiness'), [marker('content_readiness', 'running'), marker('content_readiness', 'failed')]);
   assert.ok(!events(result).some(event => event.id === 'deploy'));
+});
+
+
+test('deployment publishes committed content with the deploy connection before readiness', t => {
+  const f = fixture(t);
+  const ci = path.join(f.root, 'ci');
+  mkdirSync(path.join(ci, 'release'), { recursive: true });
+  mkdirSync(path.join(ci, 'content'));
+  copyFileSync(localRelease, path.join(ci, 'release/local-release.sh'));
+  copyFileSync(progressScript, path.join(ci, 'release/progress.sh'));
+  mkdirSync(path.join(f.source, 'apps/go-server'), { recursive: true });
+  writeFileSync(path.join(f.source, 'apps/go-server/chessd-migrate-linux-amd64'), 'fixture');
+  writeFileSync(path.join(ci, 'content/publish-content.sh'), `#!/bin/sh
+printf 'publish %s %s %s %s %s %s\\n' "$SOURCE_ROOT" "$OCI_HOST" "$OCI_USER" "$SSH_KEY" "$PUBLIC_URL" "$CONTENT_PRUNE" >> "$COMMAND_LOG"
+exit "\${FAIL_PUBLISH:-0}"
+`, { mode: 0o755 });
+  writeFileSync(path.join(ci, 'release/deploy-chessd.sh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const script = path.join(ci, 'release/local-release.sh');
+  const connection = { SKIP_CONTENT: '', SKIP_DEPLOY: 'no', DEPLOY_HOST: 'deploy.example', DEPLOY_USER: 'release-user', DEPLOY_SSH_KEY: '/fixture/deploy-key', PUBLIC_URL: 'https://public.example' };
+  const result = f.run(connection, script);
+  assert.equal(result.status, 0, result.stderr);
+  const observed = events(result);
+  assert.deepEqual(observed.filter(event => event.id === 'content'), [marker('content', 'running'), marker('content', 'done')]);
+  assert.ok(observed.findIndex(event => event.id === 'content' && event.status === 'done') < observed.findIndex(event => event.id === 'content_readiness' && event.status === 'running'));
+  assert.ok(readFileSync(f.commandLog, 'utf8').includes(`publish ${f.source} deploy.example release-user /fixture/deploy-key https://public.example report`));
+  const failed = f.run({ ...connection, FAIL_PUBLISH: '29' }, script);
+  assert.equal(failed.status, 29);
+  assert.deepEqual(events(failed).filter(event => event.id === 'content'), [marker('content', 'running'), marker('content', 'failed')]);
+  assert.ok(!events(failed).some(event => event.id === 'content_readiness'));
 });

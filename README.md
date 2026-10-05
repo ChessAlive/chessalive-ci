@@ -17,8 +17,9 @@ There is no Jenkins, Google Cloud Build, or second build service in this path. M
 production-only host: it runs the persistent connection gateway and active application slot, serving the already-built web bundle. The
 Hyderabad host is the only place that builds, releases, monitors, and sends operations mail.
 
-The release lane deliberately skips object-storage asset mirroring and content publishing. Those
-lanes can mutate uploaded content or the live catalog/database and are not part of a code release.
+The release lane publishes the committed animation files and catalog before its read-only content
+readiness check and code deployment. Publishing verifies immutable hashes and preserves unowned
+catalog records. Pruning defaults to report mode. Object-storage asset mirroring stays separate.
 Before deployment, a read-only content readiness gate compares the source's required motion
 names, model versions and ceremony bindings with the public production catalog, then checks every
 required model URL. A code release fails when reviewed content has not been published; an app
@@ -55,7 +56,7 @@ separately; cached builds and small releases do not upload the entire media libr
 - `release/` — authenticated web console, local build pipeline, atomic Mumbai deploy, and systemd unit
 - `admin/` — admin UI source and admin operations documentation removed from the public app surface
 - `production/` — the production runtime unit installed on Mumbai
-- `content/` — retained, explicitly separate data/asset tools; never called by the code release
+- `content/` — committed animation publishing and separate object-storage asset tools
 - `config/build.env.example` — non-secret configuration template
 
 ## Hyderabad installation

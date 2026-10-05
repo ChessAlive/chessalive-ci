@@ -91,9 +91,10 @@ SKIP_TESTS="${SKIP_TESTS:-no}"
 SKIP_FULL_TESTS="${SKIP_FULL_TESTS:-no}"
 SKIP_WEB="${SKIP_WEB:-no}"
 SKIP_ASSETS="${SKIP_ASSETS:-yes}"
-SKIP_CONTENT="${SKIP_CONTENT:-yes}"
 SKIP_INSTALL="${SKIP_INSTALL:-no}"
 SKIP_DEPLOY="${SKIP_DEPLOY:-no}"
+# Build-only invocations stay read-only unless content publishing is requested.
+SKIP_CONTENT="${SKIP_CONTENT:-${SKIP_DEPLOY}}"
 DEPLOY_REMOTE="${DEPLOY_REMOTE:-no}"
 DEPLOY_HOST="${DEPLOY_HOST:-144.24.117.171}"
 DEPLOY_USER="${DEPLOY_USER:-ubuntu}"
@@ -199,7 +200,9 @@ fi
 if [[ "${SKIP_CONTENT}" != yes ]]; then
   progress_mark content running
   [[ -f "apps/go-server/chessd-migrate-linux-${BUILD_ARCH}" ]] || die "content publish requires the linux/${BUILD_ARCH} migration binary"
-  run env MIGRATE_BIN="${ROOT_DIR}/apps/go-server/chessd-migrate-linux-${BUILD_ARCH}" \
+  run env SOURCE_ROOT="${ROOT_DIR}" OCI_HOST="${DEPLOY_HOST}" OCI_USER="${DEPLOY_USER}" \
+    SSH_KEY="${DEPLOY_SSH_KEY}" PUBLIC_URL="${PUBLIC_URL}" \
+    MIGRATE_BIN="${ROOT_DIR}/apps/go-server/chessd-migrate-linux-${BUILD_ARCH}" \
     CONTENT_PRUNE="${CONTENT_PRUNE:-report}" \
     "${CI_ROOT_DIR}/content/publish-content.sh"
   progress_mark content done
@@ -207,7 +210,7 @@ else
   progress_mark content skipped
 fi
 
-# Publishing stays separate, but a production code release must prove that the
+# After publishing, a production code release must prove that the
 # exact required motions, bodies and cast bindings are already publicly available.
 # A healthy app process alone does not prove that capture previews can play.
 if [[ "${SKIP_DEPLOY}" != yes ]]; then

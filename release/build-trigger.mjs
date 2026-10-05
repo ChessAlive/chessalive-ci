@@ -255,7 +255,7 @@ function startBuild(kind = 'build') {
   const child = spawn("bash", [isRollback ? './release/rollback-chessd.sh' : './release/local-release.sh'], {
     cwd: root,
     detached: true,
-    env: { ...process.env, CHESSALIVE_PROGRESS: "yes", SOURCE_DIR: sourceDir, SOURCE_ROOT: sourceDir, CI_ROOT: root, LOCAL_DEPLOY: isRollback ? 'no' : 'yes', PUBLIC_URL: productionUrl, SKIP_INSTALL: "no", SKIP_TESTS: "no", SKIP_FULL_TESTS: process.env.BUILD_SKIP_FULL_TESTS || "no", SKIP_WEB_SETUP: "yes", SKIP_BUDGETS: process.env.BUILD_SKIP_BUDGETS || "no", SKIP_ASSETS: "yes", SKIP_CONTENT: "yes", SKIP_DEPLOY: "no" },
+    env: { ...process.env, CHESSALIVE_PROGRESS: "yes", SOURCE_DIR: sourceDir, SOURCE_ROOT: sourceDir, CI_ROOT: root, LOCAL_DEPLOY: isRollback ? 'no' : 'yes', PUBLIC_URL: productionUrl, SKIP_INSTALL: "no", SKIP_TESTS: "no", SKIP_FULL_TESTS: process.env.BUILD_SKIP_FULL_TESTS || "no", SKIP_WEB_SETUP: "yes", SKIP_BUDGETS: process.env.BUILD_SKIP_BUDGETS || "no", SKIP_ASSETS: "yes", SKIP_CONTENT: isRollback ? "yes" : "no", SKIP_DEPLOY: "no" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   state.release.child = child;
