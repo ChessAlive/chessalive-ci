@@ -305,7 +305,7 @@ fi
 scp "${SSH_OPTS[@]}" -q "${DOC}" "${OCI_USER}@${OCI_HOST}:${REMOTE_DOC}"
 scp "${SSH_OPTS[@]}" -q "${RUN_MIGRATE_SRC}" "${OCI_USER}@${OCI_HOST}:${REMOTE_RUNNER}"
 remote "chmod +x '${REMOTE_RUNNER}'"
-MIGRATE_ARGS="--key app:state --file ${REMOTE_DOC} --only animationClips,animationSets,pieceSets,appStateRevision"
+MIGRATE_ARGS="--key app:state --file ${REMOTE_DOC} --only animationClips,animationSets,pieceSets,movementSets,appStateRevision"
 # The runner execs CHESSD_MIGRATE_BIN; sudo -n env … keeps that one variable across the privilege hop.
 RUN_MIGRATE="sudo -n env CHESSD_MIGRATE_BIN='${REMOTE_BIN}' '${REMOTE_RUNNER}'"
 

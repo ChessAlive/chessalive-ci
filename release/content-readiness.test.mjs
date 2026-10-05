@@ -76,3 +76,14 @@ test('CLI invoked through a symlink still executes the gate and fails on missing
   assert.equal(result.status, 1);
   assert.match(result.stderr, /catalog.config.json/);
 });
+
+
+test('the new ensemble must be published without repurposing a legacy movement', () => {
+  const movement = { id: 'movement-set-ensemble-finale', name: 'Ensemble Finale', ceremonies: { checkmate: { story: 'ensemble' } } };
+  const prod = { ...structuredClone(slice), movementSets: [{ ...movement, ceremonies: { checkmate: { story: 'parade' } } }] };
+  assert.equal(requiredContent(prod, [slice], [movement]).issues.length, 1);
+  prod.movementSets = [movement];
+  assert.deepEqual(requiredContent(prod, [slice], [movement]).issues, []);
+  prod.movementSets = [];
+  assert.equal(requiredContent(prod, [slice], [movement]).issues.length, 1);
+});

@@ -5,13 +5,19 @@ import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export function requiredContent(prod, slices) {
+export function requiredContent(prod, slices, movements = []) {
   const issues = [];
   const uploads = new Set();
   const index = key => new Map((prod[key] ?? []).map(record => [record.id, record]));
   const clips = index('animationClips');
   const pieces = index('pieceSets');
   const animations = index('animationSets');
+  const liveMovements = index('movementSets');
+  for (const expected of movements) {
+    const actual = liveMovements.get(expected.id);
+    if (!actual || actual.name !== expected.name || actual.ceremonies?.checkmate?.story !== expected.ceremonies?.checkmate?.story)
+      issues.push(`celebration ${expected.id}: required movement type not published`);
+  }
   const requirePath = value => {
     if (typeof value === 'string' && value.startsWith('/uploads/')) uploads.add(value);
   };
@@ -49,6 +55,10 @@ export async function verifyContent({ sourceRoot, publicUrl, fetchImpl = fetch }
     if (!/^[a-zA-Z0-9_-]+$/.test(entry.animationSetId)) throw new Error('Invalid animation set id');
     return JSON.parse(await readFile(resolve(sourceRoot, 'content/catalog', `${entry.animationSetId}.json`), 'utf8'));
   }));
+  const movements = await Promise.all((config.movementSetIds ?? []).map(async id => {
+    if (!/^movement-set-[a-z0-9-]+$/.test(id)) throw new Error('Invalid movement set id');
+    return JSON.parse(await readFile(resolve(sourceRoot, 'content/movement-sets', `${id}.json`), 'utf8'));
+  }));
   const base = new URL(publicUrl);
   const response = await fetchImpl(new URL('/catalog/state', base), {
     headers: { 'Cache-Control': 'no-cache' }, signal: AbortSignal.timeout(30000),
@@ -57,7 +67,7 @@ export async function verifyContent({ sourceRoot, publicUrl, fetchImpl = fetch }
   const prod = await response.json();
   if (!Array.isArray(prod.animationClips) || !Array.isArray(prod.pieceSets) || !Array.isArray(prod.animationSets))
     throw new Error('Public catalog is not a complete catalog document');
-  const { issues, uploads } = requiredContent(prod, slices);
+  const { issues, uploads } = requiredContent(prod, slices, movements);
   if (issues.length) throw new Error(`Required content is not live (${issues.length} mismatches):\n${issues.slice(0, 12).join('\n')}\nPublish the reviewed content with content/publish-content.sh before releasing this code.`);
   let next = 0;
   await Promise.all(Array.from({ length: Math.min(6, uploads.length) }, async () => {
