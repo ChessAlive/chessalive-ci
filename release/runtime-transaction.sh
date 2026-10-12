@@ -35,6 +35,8 @@ if [[ "${MODE}" == deploy ]]; then
       *) echo "no official build for ${machine}"; return 1 ;;
     esac
     name="node-${NODE_VERSION}-linux-${arch}"
+    # Staging left by an interrupted deploy; safe to remove, the transaction is single-writer.
+    rm -rf /opt/chessalive/.node-install.*
     work="$(mktemp -d /opt/chessalive/.node-install.XXXXXX 2>/dev/null)" || { echo "no staging directory"; return 1; }
     if ! curl -fsSL --retry 2 --connect-timeout 20 --max-time 300 -o "${work}/${name}.tar.gz" \
       "https://nodejs.org/dist/${NODE_VERSION}/${name}.tar.gz" 2>/dev/null; then

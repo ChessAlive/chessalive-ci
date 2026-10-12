@@ -17,8 +17,11 @@ WorkingDirectory=/opt/chessalive/slots/%i
 Restart=on-failure
 RestartSec=2
 TimeoutStopSec=90
-MemoryMax=8G
-MemoryHigh=6G
+# SIGTERM only chessd, which stops its V4 runtime child itself; systemd SIGKILLs anything left over.
+KillMode=mixed
+# Memory budget: Go 5 GiB (GOMEMLIMIT) + the Coach V4 runtime child (Node) up to 1.5 GiB.
+MemoryMax=9G
+MemoryHigh=7G
 OOMPolicy=stop
 NoNewPrivileges=true
 PrivateTmp=true

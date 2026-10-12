@@ -173,6 +173,19 @@ test("application releases use isolated units while the connection gateway stays
   assert.ok(!transaction.includes('"restart", "chessgate"'));
 });
 
+// A slot's cgroup also holds the Coach V4 (beta) runtime chessd runs as a child (Node, up to
+// ~1.5 GiB loaded), so MemoryHigh leaves room for it above Go's soft heap target, and a stop
+// signals chessd alone, which stops the child itself; systemd SIGKILLs whatever is left.
+test("application slots budget memory for the V4 runtime child and let chessd stop it", () => {
+  assert.ok(slotUnit.includes("Environment=GOMEMLIMIT=5GiB"));
+  assert.match(slotUnit, /^MemoryHigh=7G$/m);
+  assert.match(slotUnit, /^MemoryMax=9G$/m);
+  assert.ok(slotUnit.indexOf("GOMEMLIMIT=5GiB") < slotUnit.indexOf("MemoryHigh=7G"));
+  assert.match(slotUnit, /^OOMPolicy=stop$/m);
+  assert.match(slotUnit, /^KillMode=mixed$/m);
+  assert.match(slotUnit, /^TimeoutStopSec=90$/m);
+});
+
 test("the optional Coach V5 engine keeps the existing overridable runtime configuration", () => {
   assert.ok(slotUnit.includes("Environment=CHESSALIVE_COACH5_ENGINE=/usr/games/stockfish"));
   assert.ok(slotUnit.indexOf("CHESSALIVE_COACH5_ENGINE") < slotUnit.indexOf("EnvironmentFile=/etc/chessalive.env"));
@@ -253,6 +266,12 @@ test("every deploy installs the pinned Node for the V4 brain, idempotently and n
     });
     const downloads = () => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : []);
     const link = join(root, "node");
+    // A deploy interrupted mid-install leaves its staging directory behind; the next install
+    // removes it (deploys run one at a time, so no other install is using it).
+    const leaveStaging = () => {
+      mkdirSync(join(root, ".node-install.Interrupted", name), { recursive: true });
+      writeFileSync(join(root, ".node-install.Interrupted", `${name}.tar.gz`), "partial download");
+    };
     const quietSuccess = (result) => {
       assert.equal(result.status, 0, result.stderr);
       assert.equal(result.stdout, "deploy continues\n");
@@ -262,6 +281,7 @@ test("every deploy installs the pinned Node for the V4 brain, idempotently and n
       assert.deepEqual(readdirSync(root).filter(entry => entry.startsWith(".node-install.")), []);
     };
 
+    leaveStaging();
     quietSuccess(deployWith(fixture));
     assert.deepEqual(downloads().map(line => line.split(" ").at(-1)), [`https://nodejs.org/dist/${version}/${name}.tar.gz`]);
 
@@ -284,6 +304,7 @@ test("every deploy installs the pinned Node for the V4 brain, idempotently and n
     for (const [download, problem] of [["", "download failed"], [corrupt, "checksum mismatch"]]) {
       rmSync(root, { recursive: true, force: true });
       mkdirSync(root);
+      leaveStaging();
       const result = deployWith(download);
       assert.equal(result.status, 0, result.stderr);
       assert.equal(result.stdout, "deploy continues\n", "never fatal");
