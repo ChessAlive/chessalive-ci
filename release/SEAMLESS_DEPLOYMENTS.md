@@ -65,3 +65,14 @@ of application code does not roll back Vault secrets or database schemas.
 The application protocol and compatible schemas are versioned. Changes that cannot import the
 retained release's state require a separately planned migration. Gateway upgrades also require a
 separate connection-drain plan; routine application deployment deliberately leaves it running.
+
+## Host packages
+
+Every deploy installs what the application needs on the host before the candidate starts, skipping
+anything already present and never failing the deploy: Stockfish for Coach V5, and a pinned
+official Node 22 build in `/opt/chessalive/node-v<version>-linux-<arch>` behind the symlink
+`/opt/chessalive/node`. chessd carries the Coach V4 (beta) brain in its own binary and runs it
+itself as a supervised child process, so the deploy only installs Node: there is no brain service,
+token or setting to manage, and a rollback rolls the brain back with chessd. Without Node the
+deploy prints one warning and V4 (beta) stays quiet. To upgrade Node, change the version and both
+sha256 values (from that release's `SHASUMS256.txt`) in `runtime-transaction.sh` together.
