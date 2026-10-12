@@ -1,5 +1,8 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync,
+} from "node:fs";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -170,6 +173,19 @@ test("application releases use isolated units while the connection gateway stays
   assert.ok(!transaction.includes('"restart", "chessgate"'));
 });
 
+// A slot's cgroup also holds the Coach V4 (beta) runtime chessd runs as a child (Node, up to
+// ~1.5 GiB loaded), so MemoryHigh leaves room for it above Go's soft heap target, and a stop
+// signals chessd alone, which stops the child itself; systemd SIGKILLs whatever is left.
+test("application slots budget memory for the V4 runtime child and let chessd stop it", () => {
+  assert.ok(slotUnit.includes("Environment=GOMEMLIMIT=5GiB"));
+  assert.match(slotUnit, /^MemoryHigh=7G$/m);
+  assert.match(slotUnit, /^MemoryMax=9G$/m);
+  assert.ok(slotUnit.indexOf("GOMEMLIMIT=5GiB") < slotUnit.indexOf("MemoryHigh=7G"));
+  assert.match(slotUnit, /^OOMPolicy=stop$/m);
+  assert.match(slotUnit, /^KillMode=mixed$/m);
+  assert.match(slotUnit, /^TimeoutStopSec=90$/m);
+});
+
 test("the optional Coach V5 engine keeps the existing overridable runtime configuration", () => {
   assert.ok(slotUnit.includes("Environment=CHESSALIVE_COACH5_ENGINE=/usr/games/stockfish"));
   assert.ok(slotUnit.indexOf("CHESSALIVE_COACH5_ENGINE") < slotUnit.indexOf("EnvironmentFile=/etc/chessalive.env"));
@@ -203,4 +219,99 @@ test("every deploy installs Coach V5's engine before the candidate starts, and t
   assert.ok(runtimeTransaction.includes("Coach V5 stays off"), "never fatal");
   assert.ok(deploy.includes("sudo -n env MODE=deploy"), "the transaction runs as root");
   assert.ok(slotUnit.includes("Environment=CHESSALIVE_COACH5_ENGINE=/usr/games/stockfish"));
+});
+
+// chessd runs the Coach V4 (beta) brain itself; the host only needs Node. The block runs against a
+// scratch root with a fake download of a fixture build whose sha256 replaces the pinned one.
+test("every deploy installs the pinned Node for the V4 brain, idempotently and never fatally", () => {
+  const block = runtimeTransaction.match(/\n {2}NODE_VERSION=(v22\.\d+\.\d+)\n[\s\S]*?stays quiet until it is" >&2\n {2}fi\n/);
+  assert.ok(block, "runtime-transaction.sh installs Node");
+  assert.ok(block.index > runtimeTransaction.indexOf('if [[ "${MODE}" == deploy ]]; then'), "in a deploy");
+  assert.ok(block.index < runtimeTransaction.indexOf("exec systemd-run"), "before the transaction starts the candidate");
+  assert.match(block[0], /\n {6}aarch64\) arch=arm64 sum=[0-9a-f]{64} ;;\n/);
+  assert.match(block[0], /\n {6}x86_64\) arch=x64 sum=[0-9a-f]{64} ;;\n/);
+  assert.ok(block[0].includes('"https://nodejs.org/dist/${NODE_VERSION}/${name}.tar.gz"'));
+
+  const version = block[1];
+  const name = `node-${version}-linux-x64`;
+  const scratch = mkdtempSync(join(tmpdir(), "chessalive-node-install-"));
+  try {
+    const root = join(scratch, "opt"); // Stands in for /opt/chessalive.
+    const bin = join(scratch, "bin");
+    const build = join(scratch, "build");
+    const log = join(scratch, "downloads.log");
+    mkdirSync(root);
+    mkdirSync(bin);
+    mkdirSync(join(build, name, "bin"), { recursive: true });
+    writeFileSync(join(build, name, "bin", "node"), `#!/bin/sh\necho ${version}\n`, { mode: 0o755 });
+    const fixture = join(scratch, `${name}.tar.gz`);
+    const packed = spawnSync("tar", ["-czf", fixture, "-C", build, name], { encoding: "utf8" });
+    assert.equal(packed.status, 0, packed.stderr);
+    const corrupt = join(scratch, "corrupt.tar.gz");
+    writeFileSync(corrupt, "not the pinned build");
+    writeFileSync(join(bin, "uname"), "#!/bin/sh\necho x86_64\n", { mode: 0o755 });
+    // The fake download drains stdin first: the rest of the deploy script reaches the host on
+    // stdin (bash -s), so the block must never hand that stream to a child.
+    writeFileSync(join(bin, "curl"), [
+      "#!/bin/sh", "cat >/dev/null", 'echo "$*" >> "$DOWNLOAD_LOG"', 'out=""',
+      'while [ $# -gt 0 ]; do [ "$1" = -o ] && out="$2"; shift; done',
+      '[ -n "$DOWNLOAD_FIXTURE" ] || exit 22', 'cp "$DOWNLOAD_FIXTURE" "$out"', "",
+    ].join("\n"), { mode: 0o755 });
+    const sum = createHash("sha256").update(readFileSync(fixture)).digest("hex");
+    const script = block[0].replaceAll("/opt/chessalive", root).replace(/(x86_64\) arch=x64 sum=)[0-9a-f]{64}/, `$1${sum}`);
+    const deployWith = (download) => spawnSync("bash", ["-s"], {
+      encoding: "utf8",
+      input: `set -euo pipefail\n${script}echo deploy continues\n`,
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DOWNLOAD_LOG: log, DOWNLOAD_FIXTURE: download },
+    });
+    const downloads = () => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : []);
+    const link = join(root, "node");
+    // A deploy interrupted mid-install leaves its staging directory behind; the next install
+    // removes it (deploys run one at a time, so no other install is using it).
+    const leaveStaging = () => {
+      mkdirSync(join(root, ".node-install.Interrupted", name), { recursive: true });
+      writeFileSync(join(root, ".node-install.Interrupted", `${name}.tar.gz`), "partial download");
+    };
+    const quietSuccess = (result) => {
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout, "deploy continues\n");
+      assert.equal(result.stderr, "", "quiet on success");
+      assert.equal(readlinkSync(link), join(root, name));
+      assert.equal(spawnSync(join(link, "bin", "node"), ["--version"], { encoding: "utf8" }).stdout, `${version}\n`);
+      assert.deepEqual(readdirSync(root).filter(entry => entry.startsWith(".node-install.")), []);
+    };
+
+    leaveStaging();
+    quietSuccess(deployWith(fixture));
+    assert.deepEqual(downloads().map(line => line.split(" ").at(-1)), [`https://nodejs.org/dist/${version}/${name}.tar.gz`]);
+
+    // Already that version: nothing is downloaded, even when a download would fail.
+    quietSuccess(deployWith(""));
+    assert.equal(downloads().length, 1);
+
+    // An older Node behind the link is replaced; the older version stays on disk.
+    const older = join(root, "node-v22.0.0-linux-x64");
+    mkdirSync(join(older, "bin"), { recursive: true });
+    writeFileSync(join(older, "bin", "node"), "#!/bin/sh\necho v22.0.0\n", { mode: 0o755 });
+    rmSync(link);
+    symlinkSync(older, link);
+    quietSuccess(deployWith(fixture));
+    assert.equal(downloads().length, 2);
+    assert.ok(existsSync(join(older, "bin", "node")));
+
+    // A failed download or a checksum mismatch prints one warning, installs nothing, and the
+    // deploy continues under set -euo pipefail.
+    for (const [download, problem] of [["", "download failed"], [corrupt, "checksum mismatch"]]) {
+      rmSync(root, { recursive: true, force: true });
+      mkdirSync(root);
+      leaveStaging();
+      const result = deployWith(download);
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout, "deploy continues\n", "never fatal");
+      assert.equal(result.stderr, `! Node ${version} could not be installed (${problem}); V4 (beta) stays quiet until it is\n`);
+      assert.deepEqual(readdirSync(root), [], "nothing half-installed");
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 });
