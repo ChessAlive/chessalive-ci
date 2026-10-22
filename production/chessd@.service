@@ -10,6 +10,9 @@ Group=chessalive
 Environment=NODE_ENV=production
 Environment=GOMEMLIMIT=5GiB
 Environment=CHESSALIVE_COACH5_ENGINE=/usr/games/stockfish
+# The Coach's browser engine (app ADR 2026-10-22, baseline 0.15): a web player's page runs their Coach
+# searches over the hub. /etc/chessalive.env may set it false to switch it off.
+Environment=CHESSALIVE_COACH5_BROWSER_ENGINE=true
 EnvironmentFile=/etc/chessalive.env
 EnvironmentFile=/etc/chessalive/slot-%i.env
 ExecStart=/opt/chessalive/slots/%i/chessd

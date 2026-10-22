@@ -191,6 +191,15 @@ test("the optional Coach V5 engine keeps the existing overridable runtime config
   assert.ok(slotUnit.indexOf("CHESSALIVE_COACH5_ENGINE") < slotUnit.indexOf("EnvironmentFile=/etc/chessalive.env"));
 });
 
+test("the Coach's browser engine is on in the slots and in the web build", () => {
+  // chessd's side: before the env files, so /etc/chessalive.env can switch it off.
+  assert.ok(slotUnit.includes("Environment=CHESSALIVE_COACH5_BROWSER_ENGINE=true"));
+  assert.ok(slotUnit.indexOf("CHESSALIVE_COACH5_BROWSER_ENGINE") < slotUnit.indexOf("EnvironmentFile=/etc/chessalive.env"));
+  // The web side is inlined at build time (Expo), by both build paths.
+  assert.match(localRelease, /EXPO_PUBLIC_COACH5_BROWSER_ENGINE="\$\{EXPO_PUBLIC_COACH5_BROWSER_ENGINE:-true\}" npm run build:web/);
+  assert.match(deploy, /export EXPO_PUBLIC_COACH5_BROWSER_ENGINE="\$\{EXPO_PUBLIC_COACH5_BROWSER_ENGINE:-true\}"[\s\S]*npm run --silent build:web/);
+});
+
 test("production monitoring runs hourly and sends one detailed email per incident", () => {
   assert.equal(MONITOR_INTERVAL_MS, 3_600_000);
   assert.deepEqual(nextMonitorIncidentState(false, "red"), { active: true, shouldNotify: true });
