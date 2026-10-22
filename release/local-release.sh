@@ -173,7 +173,9 @@ fi
 (( browser_status == 0 )) || die 'browser dependency setup failed'
 
 if [[ "${SKIP_WEB}" != yes ]]; then
-  step_run web env EXPO_PUBLIC_CHESSALIVE_AUDIO_CDN_ORIGIN="${EXPO_PUBLIC_CHESSALIVE_AUDIO_CDN_ORIGIN}" npm run build:web
+  # The Coach's browser engine is on in the web build (app ADR 2026-10-22); chessd's slot unit turns on its side.
+  step_run web env EXPO_PUBLIC_CHESSALIVE_AUDIO_CDN_ORIGIN="${EXPO_PUBLIC_CHESSALIVE_AUDIO_CDN_ORIGIN}" \
+    EXPO_PUBLIC_COACH5_BROWSER_ENGINE="${EXPO_PUBLIC_COACH5_BROWSER_ENGINE:-true}" npm run build:web
   if [[ "${SKIP_BUDGETS}" == yes ]]; then
     say 'Performance/bundle budgets skipped (SKIP_BUDGETS=yes)'
     progress_mark performance skipped

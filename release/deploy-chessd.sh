@@ -96,6 +96,8 @@ else
     say "Building web bundle"
     # Audio is served from object storage, not the bundle — see resolvePublicAssetUrl.
     export EXPO_PUBLIC_CHESSALIVE_AUDIO_CDN_ORIGIN="${EXPO_PUBLIC_CHESSALIVE_AUDIO_CDN_ORIGIN:-https://objectstorage.ap-mumbai-1.oraclecloud.com/n/bmt2adcjgo0u/b/chessalive-audio/o}"
+    # The Coach's browser engine is on in the web build (app ADR 2026-10-22); the slot unit turns on chessd's side.
+    export EXPO_PUBLIC_COACH5_BROWSER_ENGINE="${EXPO_PUBLIC_COACH5_BROWSER_ENGINE:-true}"
     ( cd "${SOURCE_ROOT}" && progress_run web npm run --silent build:web )
   fi
 fi
