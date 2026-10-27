@@ -133,7 +133,12 @@ class Platform:
             "CHESSALIVE_WEB_ROOT": directory / "web",
             "CHESSALIVE_UPLOAD_DIR": self.root / "data/uploads",
             "CHESSALIVE_DARE_UPLOAD_DIR": self.root / "data/uploads",
-            "CHESSALIVE_ORACLE_POOL": 6,
+            "CHESSALIVE_ORACLE_POOL": int(os.environ.get("CHESSALIVE_ORACLE_POOL", 8)),
+            "CHESSALIVE_DB_BACKGROUND_MAX": int(os.environ.get("CHESSALIVE_DB_BACKGROUND_MAX", 2)),
+            "CHESSALIVE_KV_CACHE_TTL_MS": int(os.environ.get("CHESSALIVE_KV_CACHE_TTL_MS", 5000)),
+            "CHESSALIVE_KV_CACHE_MAX_ENTRIES": int(os.environ.get("CHESSALIVE_KV_CACHE_MAX_ENTRIES", 16384)),
+            "CHESSALIVE_STOCKFISH_POOL": int(os.environ.get("CHESSALIVE_STOCKFISH_POOL", 4)),
+            "CHESSALIVE_COACH5_ENGINE_POOL": int(os.environ.get("CHESSALIVE_COACH5_ENGINE_POOL", 4)),
             "CHESSALIVE_RELEASE_CONTROL_SOCKET": RUN / (slot + ".sock"),
             "CHESSALIVE_RELEASE_STANDBY": 1,
             "CHESSALIVE_RELEASE_ID": release["id"],
@@ -154,15 +159,32 @@ class Platform:
         command("systemctl", "daemon-reload")
 
     def start(self, release):
+        if release["slot"] not in ("blue", "green"):
+            raise ValueError("Invalid controlled release slot")
+        self.release_dir(release)  # Validate the release before any unit mutation.
+        unit = "chessd@" + release["slot"]
+        try:
+            # A prior committed transaction may have failed to stop this slot.
+            # systemctl start alone would retain that process after changing its files.
+            command("systemctl", "stop", unit)
+        except subprocess.CalledProcessError:
+            state = command("systemctl", "show", unit, "--property=LoadState,ActiveState,MainPID", capture_output=True).stdout
+            properties = dict(line.split("=", 1) for line in state.splitlines() if "=" in line)
+            if properties != {"LoadState": "not-found", "ActiveState": "inactive", "MainPID": "0"}:
+                raise RuntimeError("Selected release slot could not be stopped safely")
         self.configure(release)
-        command("systemctl", "enable", "chessd@" + release["slot"])
-        command("systemctl", "start", "chessd@" + release["slot"])
+        command("systemctl", "enable", unit)
+        command("systemctl", "start", unit)
         deadline = time.monotonic() + 90
         while time.monotonic() < deadline:
             try:
                 state = self.runtime(release, "status", method="GET")
-                if state.get("state") in ("standby", "active"):
+                if state.get("state") != "stopped" and state.get("releaseId") != release["id"]:
+                    raise RuntimeError("Selected slot returned a different release identity")
+                if state.get("state") == "standby":
                     return
+                if state.get("state") in ("active", "prepared", "resuming", "quiesced", "quiescing"):
+                    raise RuntimeError("Candidate did not start in standby")
                 if state.get("state") == "failed":
                     raise RuntimeError("Candidate failed initialization")
             except (OSError, http.client.HTTPException):
@@ -224,6 +246,319 @@ class Platform:
                 if path.is_file() and not path.is_symlink() and re.fullmatch(r"[a-f0-9]{64}", path.name) and path.stat().st_nlink == 1:
                     path.unlink()
 
+    def sync_autoscaled_pods(self, release, mode="deploy"):
+        """When OKE / Kubernetes is configured on the host, automatically roll out the verified release
+        to all autoscaled pods and ensure the HorizontalPodAutoscaler stays synchronized."""
+        if self.root != ROOT:
+            return
+        kubeconfig = Path(os.environ.get("KUBECONFIG") or (CONFIG / "kubeconfig"))
+        if not kubeconfig.is_file() or not shutil.which("kubectl"):
+            return
+        meta = public_info(read_json(self.release_dir(release) / "manifest.json"))
+        commit = (meta.get("commitHash") or "")[:12]
+        version = meta.get("version") or ""
+        env = {**os.environ, "KUBECONFIG": str(kubeconfig)}
+        try:
+            repo = os.environ.get("OCIR_IMAGE_REPO", "").strip()
+            if repo and commit:
+                subprocess.run(["kubectl", "-n", "chessalive", "set", "image", "deployment/chessd",
+                                f"chessd={repo}:sha-{commit}"], env=env, check=True, timeout=30)
+            subprocess.run(["kubectl", "-n", "chessalive", "annotate", "deployment/chessd", "--overwrite",
+                            f"chessalive.com/release-id={release['id']}",
+                            f"chessalive.com/commit-hash={meta.get('commitHash') or ''}",
+                            f"chessalive.com/client-version={version}",
+                            f"chessalive.com/rollout-mode={mode}"], env=env, check=True, timeout=20)
+            subprocess.run(["kubectl", "-n", "chessalive", "rollout", "status", "deployment/chessd",
+                            "--timeout=180s"], env=env, check=True, timeout=190)
+        except (OSError, subprocess.SubprocessError) as error:
+            print(f"! OKE pod rollout warning: {error}", file=sys.stderr)
+
+    def _slot_metrics(self, port, token):
+        if not token:
+            return {}
+        request = urllib.request.Request(f"http://127.0.0.1:{port}/metrics",
+                                         headers={"Authorization": "Bearer " + token})
+        try:
+            with urllib.request.urlopen(request, timeout=1.5) as response:
+                text = response.read(2 * 1024 * 1024).decode("utf-8", errors="replace")
+        except (OSError, ValueError, http.client.HTTPException):
+            return {}
+        http_reqs = 0.0
+        http_bytes = 0.0
+        cache_hits = 0.0
+        cache_misses = 0.0
+        cache_stale = 0.0
+        kv_hits = 0.0
+        kv_misses = 0.0
+        gauges = {}
+        for line in text.splitlines():
+            if not line or line.startswith("#") or "_bucket{" in line:
+                continue
+            parts = line.rsplit(" ", 1)
+            if len(parts) != 2:
+                continue
+            name, raw_val = parts
+            try:
+                val = float(raw_val)
+            except ValueError:
+                continue
+            if name.startswith("chessalive_http_request_bytes_count{"):
+                http_reqs += val
+            elif name.startswith("chessalive_http_response_bytes_sum{"):
+                http_bytes += val
+            elif name.startswith("chessalive_cache_requests_total{"):
+                is_kv = 'cache="kv_hot"' in name
+                if 'result="hit"' in name:
+                    cache_hits += val
+                    if is_kv:
+                        kv_hits += val
+                elif 'result="miss"' in name:
+                    cache_misses += val
+                    if is_kv:
+                        kv_misses += val
+                elif 'result="stale"' in name:
+                    cache_stale += val
+            elif "{" not in name:
+                gauges[name] = val
+        return {
+            "httpRequestsTotal": int(http_reqs),
+            "httpResponseBytesTotal": int(http_bytes),
+            "webSockets": int(gauges["chessalive_ws_connections"]) if "chessalive_ws_connections" in gauges else None,
+            "chatSockets": int(gauges["chessalive_chat_socket_conns"]) if "chessalive_chat_socket_conns" in gauges else None,
+            "activeUsers5m": int(gauges["chessalive_active_users_5m"]) if "chessalive_active_users_5m" in gauges else None,
+            "dbPoolInUse": int(gauges["chessalive_db_pool_in_use"]) if "chessalive_db_pool_in_use" in gauges else None,
+            "dbPoolIdle": int(gauges["chessalive_db_pool_idle"]) if "chessalive_db_pool_idle" in gauges else None,
+            "dbPoolMax": int(gauges["chessalive_db_pool_open_max"]) if "chessalive_db_pool_open_max" in gauges else None,
+            "dbBackgroundInUse": int(gauges["chessalive_db_background_in_use"]) if "chessalive_db_background_in_use" in gauges else None,
+            "dbBackgroundMax": int(gauges["chessalive_db_background_max"]) if "chessalive_db_background_max" in gauges else None,
+            "dbWaitCount": int(gauges["chessalive_db_pool_wait_count"]) if "chessalive_db_pool_wait_count" in gauges else None,
+            "dbWaitSeconds": round(gauges["chessalive_db_pool_wait_seconds"], 2) if "chessalive_db_pool_wait_seconds" in gauges else None,
+            "cacheHits": int(cache_hits),
+            "cacheMisses": int(cache_misses),
+            "cacheStale": int(cache_stale),
+            "kvHotHits": int(kv_hits),
+            "kvHotMisses": int(kv_misses),
+            "memoryBytes": int(gauges["process_resident_memory_bytes"]) if "process_resident_memory_bytes" in gauges else None,
+            "cpuSeconds": round(gauges["process_cpu_seconds_total"], 2) if "process_cpu_seconds_total" in gauges else None,
+            "goroutines": int(gauges["go_goroutines"]) if "go_goroutines" in gauges else None,
+        }
+
+    def topology(self, current, previous, busy=False, pending=False):
+        live_host = self.root == ROOT and RUN.exists()
+        journal = read_json(self.journal) if pending else {}
+        candidate = journal.get("candidate") if isinstance(journal.get("candidate"), dict) else None
+        gate = {}
+        if live_host and (RUN / "gateway.sock").exists():
+            try:
+                gate = self.gateway("status", method="GET")
+            except Exception:
+                gate = {}
+        upstream = gate.get("currentUpstream") or (self.upstream(current) if isinstance(current, dict) and current.get("port") else None)
+        token = None
+        if live_host and Path("/etc/chessalive.env").is_file():
+            try:
+                for line in Path("/etc/chessalive.env").read_text().splitlines():
+                    if line.startswith("CHESSALIVE_METRICS_TOKEN="):
+                        token = line.split("=", 1)[1].strip()
+                        break
+            except OSError:
+                token = None
+        systemd = {}
+        if live_host:
+            try:
+                out = subprocess.run(["systemctl", "show", "chessd@green", "chessd@blue",
+                                      "--property=Id,ActiveState,MemoryCurrent,MemoryPeak,CPUUsageNSec"],
+                                     capture_output=True, text=True, timeout=1.5, check=True).stdout
+                for block in out.strip().split("\n\n"):
+                    vals = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
+                    unit_id = vals.get("Id", "")
+                    systemd[unit_id] = vals
+            except (OSError, subprocess.SubprocessError):
+                systemd = {}
+
+        slot_releases = {}
+        for item in (previous, current, candidate):
+            if isinstance(item, dict) and item.get("slot") in ("green", "blue"):
+                slot_releases[item["slot"]] = item
+        for slot_name, port in (("green", 8082), ("blue", 8081)):
+            if slot_name not in slot_releases:
+                link = self.root / "slots" / slot_name
+                try:
+                    target = link.resolve()
+                    if target.parent == self.releases and re.fullmatch(r"(?:release|legacy)-[a-z0-9-]+", target.name):
+                        slot_releases[slot_name] = {"id": target.name, "slot": slot_name, "port": port, "protocol": 1}
+                except OSError:
+                    pass
+
+        pods = []
+        for slot_name, port in (("green", 8082), ("blue", 8081)):
+            rel = slot_releases.get(slot_name)
+            rel_id = rel.get("id") if isinstance(rel, dict) else None
+            build = public_info(read_json(self.release_dir(rel) / "manifest.json")) if rel_id else {"commitHash": None, "commitMessage": None, "commitDate": None, "version": None}
+            sock_state = {}
+            if live_host and (RUN / f"{slot_name}.sock").exists():
+                try:
+                    sock_state = control(RUN / f"{slot_name}.sock", "status", method="GET")
+                except Exception:
+                    sock_state = {}
+            unit_vals = systemd.get(f"chessd@{slot_name}.service", {})
+            sys_active = unit_vals.get("ActiveState")
+            state_str = sock_state.get("state") or ("active" if sys_active == "active" else "stopped")
+            is_active_upstream = upstream == f"http://127.0.0.1:{port}" or (not upstream and isinstance(current, dict) and current.get("slot") == slot_name)
+            if isinstance(candidate, dict) and candidate.get("slot") == slot_name and pending:
+                role = "candidate"
+            elif is_active_upstream:
+                role = "active"
+            elif rel_id:
+                role = "standby"
+            else:
+                role = "idle"
+            metrics = self._slot_metrics(port, token) if live_host and state_str != "stopped" else {}
+            def _num(val):
+                return int(val) if isinstance(val, str) and val.isdigit() and int(val) < 2**63 else None
+            cgroup_mem = _num(unit_vals.get("MemoryCurrent", ""))
+            cgroup_peak = _num(unit_vals.get("MemoryPeak", ""))
+            cgroup_cpu = _num(unit_vals.get("CPUUsageNSec", ""))
+            ws_count = sock_state.get("webSockets") if isinstance(sock_state.get("webSockets"), int) else metrics.get("webSockets")
+            pods.append({
+                "id": f"pod-{slot_name}",
+                "slot": slot_name,
+                "name": f"pod-{slot_name} · chessd@{slot_name}",
+                "kind": "systemd-slot",
+                "endpoint": f"127.0.0.1:{port}",
+                "port": port,
+                "role": role,
+                "state": state_str,
+                "systemdState": sys_active or ("active" if state_str != "stopped" else "inactive"),
+                "writer": bool(sock_state.get("writer") or (role == "active" and state_str == "active")),
+                "releaseId": sock_state.get("releaseId") or rel_id,
+                "build": build,
+                "traffic": {
+                    "trafficSharePercent": 100.0 if role == "active" else 0.0,
+                    "webSockets": ws_count if ws_count is not None else 0,
+                    "chatSockets": metrics.get("chatSockets") if metrics.get("chatSockets") is not None else 0,
+                    "activeRequests": sock_state.get("activeRequests") if isinstance(sock_state.get("activeRequests"), int) else 0,
+                    "residentRooms": sock_state.get("residentRooms") if isinstance(sock_state.get("residentRooms"), int) else 0,
+                    "activeUsers5m": metrics.get("activeUsers5m"),
+                    "httpRequestsTotal": metrics.get("httpRequestsTotal"),
+                    "httpResponseBytesTotal": metrics.get("httpResponseBytesTotal"),
+                },
+                "resources": {
+                    "memoryBytes": cgroup_mem if cgroup_mem is not None else metrics.get("memoryBytes"),
+                    "peakMemoryBytes": cgroup_peak,
+                    "cpuSeconds": metrics.get("cpuSeconds") if metrics.get("cpuSeconds") is not None else (round(cgroup_cpu / 1e9, 2) if cgroup_cpu is not None else None),
+                    "goroutines": metrics.get("goroutines"),
+                    "dbPoolInUse": metrics.get("dbPoolInUse"),
+                    "dbPoolIdle": metrics.get("dbPoolIdle"),
+                    "dbPoolMax": metrics.get("dbPoolMax") or 8,
+                    "dbBackgroundInUse": metrics.get("dbBackgroundInUse"),
+                    "dbBackgroundMax": metrics.get("dbBackgroundMax") or 2,
+                    "dbWaitCount": metrics.get("dbWaitCount"),
+                    "dbWaitSeconds": metrics.get("dbWaitSeconds"),
+                    "cacheHits": metrics.get("cacheHits"),
+                    "cacheMisses": metrics.get("cacheMisses"),
+                    "cacheStale": metrics.get("cacheStale"),
+                    "kvHotHits": metrics.get("kvHotHits"),
+                    "kvHotMisses": metrics.get("kvHotMisses"),
+                },
+            })
+
+        oke_hpa = None
+        kubeconfig = Path(os.environ.get("KUBECONFIG") or (CONFIG / "kubeconfig"))
+        if live_host and kubeconfig.is_file() and shutil.which("kubectl"):
+            try:
+                env = {**os.environ, "KUBECONFIG": str(kubeconfig)}
+                kpods = json.loads(subprocess.run(["kubectl", "-n", "chessalive", "get", "pods", "-l", "app=chessd", "-o", "json"],
+                                                  env=env, capture_output=True, text=True, timeout=2, check=True).stdout)
+                for item in (kpods.get("items") or [])[:16]:
+                    meta_k = item.get("metadata") or {}
+                    status_k = item.get("status") or {}
+                    annotations = meta_k.get("annotations") or {}
+                    phase_k = status_k.get("phase") or "Unknown"
+                    ready_k = any(c.get("type") == "Ready" and c.get("status") == "True" for c in (status_k.get("conditions") or []))
+                    pods.append({
+                        "id": meta_k.get("name") or "oke-pod",
+                        "slot": "oke",
+                        "name": meta_k.get("name") or "oke-pod",
+                        "kind": "oke-pod",
+                        "endpoint": status_k.get("podIP") or "cluster-ip",
+                        "port": 8080,
+                        "role": "active" if ready_k else "standby",
+                        "state": "active" if ready_k else phase_k.lower(),
+                        "systemdState": phase_k.lower(),
+                        "writer": False,
+                        "releaseId": annotations.get("chessalive.com/release-id"),
+                        "build": {
+                            "commitHash": annotations.get("chessalive.com/commit-hash"),
+                            "commitMessage": "OKE autoscaled replica",
+                            "commitDate": meta_k.get("creationTimestamp"),
+                            "version": annotations.get("chessalive.com/client-version"),
+                        },
+                        "traffic": {
+                            "trafficSharePercent": None,
+                            "webSockets": None,
+                            "chatSockets": None,
+                            "activeRequests": None,
+                            "residentRooms": None,
+                            "activeUsers5m": None,
+                            "httpRequestsTotal": None,
+                            "httpResponseBytesTotal": None,
+                        },
+                        "resources": {"dbPoolMax": 8, "dbBackgroundMax": 2},
+                    })
+                khpa = json.loads(subprocess.run(["kubectl", "-n", "chessalive", "get", "hpa", "chessd-hpa", "-o", "json"],
+                                                 env=env, capture_output=True, text=True, timeout=2, check=True).stdout)
+                spec_h = khpa.get("spec") or {}
+                stat_h = khpa.get("status") or {}
+                oke_hpa = {
+                    "minPods": spec_h.get("minReplicas", 2),
+                    "maxPods": spec_h.get("maxReplicas", 8),
+                    "currentPods": stat_h.get("currentReplicas", 2),
+                    "desiredPods": stat_h.get("desiredReplicas", 2),
+                }
+            except (OSError, subprocess.SubprocessError, ValueError):
+                oke_hpa = None
+
+        active_pods = [p for p in pods if p["role"] == "active" and p["state"] == "active"]
+        if len(active_pods) > 1:
+            share = round(100.0 / len(active_pods), 1)
+            for p in pods:
+                p["traffic"]["trafficSharePercent"] = share if p in active_pods else 0.0
+
+        return {
+            "sampledAtMs": int(time.time() * 1000),
+            "mode": "oke-autoscale" if oke_hpa else "blue-green-gateway",
+            "autoDeployAllPods": True,
+            "transactionPhase": journal.get("phase") if pending else ("busy" if busy else None),
+            "gateway": {
+                "name": "chessgate",
+                "listen": "127.0.0.1:8079",
+                "phase": gate.get("phase") or ("active" if current else "uninitialized"),
+                "currentUpstream": upstream,
+                "connectedClients": gate.get("connectedClients"),
+                "activeRequests": gate.get("activeRequests"),
+                "queuedRequests": gate.get("queuedRequests"),
+                "queuedClientMessages": gate.get("queuedClientMessages"),
+                "bufferedBackendMessages": gate.get("bufferedBackendMessages"),
+            },
+            "autoscale": {
+                "enabled": True,
+                "mode": "oke-hpa" if oke_hpa else "blue-green-gateway",
+                "engine": "OKE HorizontalPodAutoscaler (2–8 Pods) + Atomic Gateway" if oke_hpa else "Atomic Blue/Green Single-Writer Gateway + OKE HPA Ready (2–8 Pods)",
+                "activePods": len(active_pods),
+                "standbyPods": len([p for p in pods if p["role"] != "active"]),
+                "totalPods": len(pods),
+                "minPods": oke_hpa["minPods"] if oke_hpa else 2,
+                "maxPods": oke_hpa["maxPods"] if oke_hpa else 8,
+                "currentPods": oke_hpa["currentPods"] if oke_hpa else len(active_pods),
+                "desiredPods": oke_hpa["desiredPods"] if oke_hpa else len(active_pods),
+                "oraclePoolPerPod": int(os.environ.get("CHESSALIVE_ORACLE_POOL", 8)),
+                "backgroundMaxPerPod": int(os.environ.get("CHESSALIVE_DB_BACKGROUND_MAX", 2)),
+                "kvCacheTtlMs": int(os.environ.get("CHESSALIVE_KV_CACHE_TTL_MS", 5000)),
+            },
+            "pods": pods,
+        }
+
     def status(self, busy=False):
         state = read_json(self.state_file)
         current, previous = state.get("current"), state.get("previous")
@@ -234,7 +569,8 @@ class Platform:
         return {"available": bool(compatible and not busy and not pending),
                 "reason": "operation_in_progress" if busy else "recovery_required" if pending else "ready" if compatible else "fallback_requires_upgrade" if complete else "no_complete_fallback",
                 "requiresIdle": bool(previous and previous.get("protocol") == 0),
-                "current": info(current), "previous": info(previous), "version": (info(previous) or {}).get("version")}
+                "current": info(current), "previous": info(previous), "version": (info(previous) or {}).get("version"),
+                "topology": self.topology(current, previous, busy=busy, pending=pending)}
 
 
 def conservative_catalog_idle(catalog, now_ms):
@@ -667,6 +1003,7 @@ def main():
     if current:
         command("systemctl", "disable", "chessd@" + current["slot"])
     platform.prune()
+    platform.sync_autoscaled_pods(candidate, args.mode)
     mark("rollback_health" if args.mode == "rollback" else "health", "done")
 
 

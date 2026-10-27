@@ -199,6 +199,26 @@ progress_adopt_log "${DEPLOY_PROGRESS_LOG}"
 rm -f "${DEPLOY_PROGRESS_LOG}"
 DEPLOY_PROGRESS_LOG=""
 
+# ── Multi-pod / OKE Autoscaler Rollout ───────────────────────────────────────────────────────────
+if [[ -n "${DEPLOY_POD_HOSTS:-}" ]]; then
+  IFS=',' read -r -a pod_hosts <<< "${DEPLOY_POD_HOSTS}"
+  for pod_host in "${pod_hosts[@]}"; do
+    pod_host="${pod_host//[[:space:]]/}"
+    [[ -n "${pod_host}" && "${pod_host}" != "${OCI_HOST}" ]] || continue
+    say "Auto-applying verified release to pod host ${OCI_USER}@${pod_host}"
+    env LOCAL_DEPLOY=no DEPLOY_POD_HOSTS="" OKE_DEPLOY_ENABLED=no TARGET_ARCH="${TARGET_ARCH}" \
+      OCI_HOST="${pod_host}" OCI_USER="${OCI_USER}" SSH_KEY="${SSH_KEY}" \
+      SKIP_BUILD=yes SKIP_WEB="${SKIP_WEB}" PUBLIC_URL="${PUBLIC_URL:-https://chessalive.com}" \
+      SOURCE_ROOT="${SOURCE_ROOT}" CI_ROOT="${CI_ROOT}" CHESSALIVE_PROGRESS=no \
+      "${CI_ROOT}/release/deploy-chessd.sh"
+  done
+fi
+
+if [[ "${OKE_DEPLOY_ENABLED:-no}" == "yes" && -x "${SOURCE_ROOT}/infra/oke/release-immutable.sh" ]]; then
+  say "Rolling out immutable release across OKE autoscaled pods (chessd-hpa)"
+  ( cd "${SOURCE_ROOT}" && ./infra/oke/release-immutable.sh deploy )
+fi
+
 say "Deployed"
 # Ask the RUNNING service, not the binary: `chessd --version` starts a fresh process with no
 # EnvironmentFile, so it fails config validation and prints a scary (meaningless) error.

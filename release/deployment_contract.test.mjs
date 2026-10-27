@@ -324,3 +324,21 @@ test("every deploy installs the pinned Node for the V4 brain, idempotently and n
     rmSync(scratch, { recursive: true, force: true });
   }
 });
+
+test("deployments configure high-performance DB/KV tuning, roll out across pod hosts/OKE, and expose live pod topology", () => {
+  const dashboard = readFileSync(new URL("release/dashboard.mjs", root), "utf8");
+  assert.ok(transaction.includes('"CHESSALIVE_ORACLE_POOL": int(os.environ.get("CHESSALIVE_ORACLE_POOL", 8))'));
+  assert.ok(transaction.includes('"CHESSALIVE_DB_BACKGROUND_MAX": int(os.environ.get("CHESSALIVE_DB_BACKGROUND_MAX", 2))'));
+  assert.ok(transaction.includes('"CHESSALIVE_KV_CACHE_TTL_MS": int(os.environ.get("CHESSALIVE_KV_CACHE_TTL_MS", 5000))'));
+  assert.ok(transaction.includes('"CHESSALIVE_KV_CACHE_MAX_ENTRIES": int(os.environ.get("CHESSALIVE_KV_CACHE_MAX_ENTRIES", 16384))'));
+  assert.ok(transaction.includes('"CHESSALIVE_STOCKFISH_POOL": int(os.environ.get("CHESSALIVE_STOCKFISH_POOL", 4))'));
+  assert.ok(transaction.includes('"CHESSALIVE_COACH5_ENGINE_POOL": int(os.environ.get("CHESSALIVE_COACH5_ENGINE_POOL", 4))'));
+  assert.ok(transaction.includes("def sync_autoscaled_pods("));
+  assert.ok(transaction.includes("def topology("));
+  assert.ok(deploy.includes("DEPLOY_POD_HOSTS"));
+  assert.ok(deploy.includes("OKE_DEPLOY_ENABLED"));
+  assert.ok(buildTrigger.includes("derivePodTrafficRates"));
+  assert.ok(dashboard.includes("Live pods, build distribution &amp; traffic routing"));
+  assert.ok(dashboard.includes('id="topologyPods"'));
+});
+

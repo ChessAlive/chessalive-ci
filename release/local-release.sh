@@ -230,11 +230,14 @@ else
   if [[ "${DEPLOY_REMOTE}" == yes ]]; then
     say "Deploying from this build host to ${DEPLOY_USER}@${DEPLOY_HOST}"
     env LOCAL_DEPLOY=no TARGET_ARCH="${BUILD_ARCH}" OCI_HOST="${DEPLOY_HOST}" OCI_USER="${DEPLOY_USER}" \
+      DEPLOY_POD_HOSTS="${DEPLOY_POD_HOSTS:-}" OKE_DEPLOY_ENABLED="${OKE_DEPLOY_ENABLED:-no}" \
       SSH_KEY="${DEPLOY_SSH_KEY}" SKIP_BUILD=yes SKIP_WEB="${SKIP_WEB}" \
       PUBLIC_URL="${PUBLIC_URL}" SOURCE_ROOT="${SOURCE_DIR}" CI_ROOT="${CI_ROOT_DIR}" "${CI_ROOT_DIR}/release/deploy-chessd.sh"
   else
     say 'Deploying locally on this host (no SSH, Jenkins, or Cloud Build)'
-    env LOCAL_DEPLOY=yes TARGET_ARCH="${BUILD_ARCH}" SKIP_BUILD=yes SKIP_WEB="${SKIP_WEB}" \
+    env LOCAL_DEPLOY=yes TARGET_ARCH="${BUILD_ARCH}" \
+      DEPLOY_POD_HOSTS="${DEPLOY_POD_HOSTS:-}" OKE_DEPLOY_ENABLED="${OKE_DEPLOY_ENABLED:-no}" \
+      SKIP_BUILD=yes SKIP_WEB="${SKIP_WEB}" \
       PUBLIC_URL="${PUBLIC_URL}" SOURCE_ROOT="${SOURCE_DIR}" CI_ROOT="${CI_ROOT_DIR}" "${CI_ROOT_DIR}/release/deploy-chessd.sh"
   fi
 fi

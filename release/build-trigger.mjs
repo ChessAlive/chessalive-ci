@@ -52,18 +52,42 @@ const rollbackSteps = () => [
 ].map(([id, label, detail]) => ({ id, label, detail, status: 'pending', startedAt: null, finishedAt: null, durationMs: null, peakRssBytes: null }));
 let rollback = { available: false, checkedAt: null, reason: 'Checking the previous release' };
 let rollbackRefresh = null;
+function derivePodTrafficRates(topology, previousTopology) {
+  if (!topology || !Array.isArray(topology.pods)) return topology || null;
+  const elapsed = previousTopology && typeof topology.sampledAtMs === 'number' && typeof previousTopology.sampledAtMs === 'number'
+    ? (topology.sampledAtMs - previousTopology.sampledAtMs) / 1000
+    : 0;
+  const prevPods = new Map((previousTopology?.pods || []).map(pod => [pod.id, pod]));
+  for (const pod of topology.pods) {
+    const prev = prevPods.get(pod.id);
+    const sameRelease = prev && pod.releaseId && pod.releaseId === prev.releaseId;
+    const reqCurr = pod.traffic?.httpRequestsTotal;
+    const reqPrev = prev?.traffic?.httpRequestsTotal;
+    const bytesCurr = pod.traffic?.httpResponseBytesTotal;
+    const bytesPrev = prev?.traffic?.httpResponseBytesTotal;
+    if (!pod.traffic) pod.traffic = {};
+    pod.traffic.requestsPerSecond = sameRelease && elapsed > 0 && typeof reqCurr === 'number' && typeof reqPrev === 'number' && reqCurr >= reqPrev
+      ? (reqCurr - reqPrev) / elapsed
+      : null;
+    pod.traffic.responseBytesPerSecond = sameRelease && elapsed > 0 && typeof bytesCurr === 'number' && typeof bytesPrev === 'number' && bytesCurr >= bytesPrev
+      ? (bytesCurr - bytesPrev) / elapsed
+      : null;
+  }
+  return topology;
+}
 function refreshRollback() {
   if (rollbackRefresh) return rollbackRefresh;
   rollbackRefresh = (async () => {
     try {
       const { stdout } = await execFileAsync('bash', ['./release/rollback-chessd.sh', '--status'], {
-        cwd: root, timeout: 15000, maxBuffer: 100000,
+        cwd: root, timeout: 15000, maxBuffer: 250000,
         env: { ...process.env, CI_ROOT: root, SOURCE_ROOT: sourceDir, PUBLIC_URL: productionUrl },
       });
       const result = JSON.parse(stdout);
       if (typeof result.available !== 'boolean') throw new Error('Invalid rollback status');
+      if (result.topology) result.topology = derivePodTrafficRates(result.topology, rollback?.topology);
       rollback = { ...result, checkedAt: new Date().toISOString() };
-    } catch { rollback = { available: false, checkedAt: new Date().toISOString(), reason: 'The previous release could not be verified' }; }
+    } catch { rollback = { ...rollback, available: false, checkedAt: new Date().toISOString(), reason: 'The previous release could not be verified' }; }
     finally { rollbackRefresh = null; }
   })();
   return rollbackRefresh;
@@ -183,6 +207,7 @@ function publicState() {
     serverTime: new Date().toISOString(),
     resources: resources.publicState(),
     rollback,
+    topology: rollback.topology || null,
     release: { kind: state.release.kind || 'build', status: state.release.status, runId: state.release.runId, startedAt: state.release.startedAt, finishedAt: state.release.finishedAt, exitCode: state.release.exitCode, durationMs: elapsedMs(state.release.startedAt, state.release.finishedAt), metrics: state.release.metrics, steps: state.release.steps.map(item => ({ ...item, durationMs: item.startedAt ? elapsedMs(item.startedAt, item.finishedAt) : item.durationMs })), log: state.release.log.slice(-14_000) },
     production: { url: productionUrl, version: production.version || null, builtAt: production.builtAt || null, commitHash: deployedCommit, commitMessage: rollback.current?.commitMessage || (deployedCommit === 'unknown' ? 'Deployed source metadata unavailable' : commitMessage), commitDate: rollback.current ? rollback.current.commitDate : commitDate, gitLink: deployedCommit !== "unknown" ? `${gitUrl}/commit/${deployedCommit}` : gitUrl },
     monitor: { level: state.monitor.level, checkedAt: state.monitor.checkedAt, latencyMs: state.monitor.latencyMs, summary: state.monitor.summary, checks: state.monitor.checks },
@@ -370,5 +395,6 @@ const server = createServer(async (request, response) => {
 if (!basicPassword) console.error("BUILD_TRIGGER_TOKEN is not configured; console access is disabled");
 server.listen(port, host, () => console.log(`ChessAlive release console listening on http://${host}:${server.address().port}`));
 resources.start();
-void refreshRollback(); setInterval(() => void refreshRollback(), 60000).unref();
+const topologyIntervalMs = Math.max(3000, Math.min(60000, Number(process.env.BUILD_TOPOLOGY_INTERVAL_MS) || 5000));
+void refreshRollback(); setInterval(() => void refreshRollback(), topologyIntervalMs).unref();
 void monitorProduction(); setInterval(() => void monitorProduction(), MONITOR_INTERVAL_MS);

@@ -19,6 +19,7 @@ const styles = String.raw`
 @media(max-width:1100px){.provider-summary{padding-left:18px;padding-right:18px}.provider-balance{margin-left:18px;margin-right:18px}}
 @media(max-width:420px){.provider-heading p{max-width:225px}.provider-summary-value{font-size:10px}.provider-summary-label,.provider-balance{font-size:8px}.provider-metric-grid{gap:6px}.provider-metric{padding:8px}.provider-metric strong{font-size:11px}}
 #providerHosts{align-items:start}.provider-metric .provider-capacity{margin:7px 0 8px}.provider-capacity-label{display:flex;justify-content:space-between;gap:8px;font:9px/1.6 var(--mono);color:#527866}.provider-capacity-label strong{display:inline;font:inherit;margin:0;color:inherit}.provider-capacity .capacity-track{margin:5px 0 6px}.provider-metric.warning{border-color:#dfcda6;background:#faf5e9}.provider-metric.critical{border-color:#e1bdc1;background:#fbf0f1}.provider-metric.warning>strong,.provider-metric.warning .provider-capacity-label{color:#96691e}.provider-metric.critical>strong,.provider-metric.critical .provider-capacity-label{color:#ad3c49}.provider-capacity .provider-headroom{color:#637e6b;font-size:9px;line-height:1.6}.provider-metric.critical .provider-headroom{color:#9d5360}.provider-metric .provider-scale-note{color:#8a9690;font-size:8px;line-height:1.5;margin-top:3px}.host-capacity{white-space:pre-line}.host-utilization{display:block;margin-top:8px;font:9px/1.5 var(--mono);color:#547a69;white-space:nowrap}.host-utilization.warning{color:#9a6c20}.host-utilization.critical{color:#b73b49;font-weight:650}.host-utilization.unknown{color:#929d9c;font-family:inherit}.host-metrics>.critical .host-value{color:#b73b49}.capacity-track{margin-top:5px;height:4px}.resource-thresholds{display:flex;align-items:center;flex-wrap:wrap;gap:14px;color:#87958b;font-size:9px;line-height:1.6;margin:10px 2px 0}.resource-thresholds span{display:inline-flex;align-items:center;gap:5px}.resource-thresholds i{width:6px;height:6px;display:inline-block;border-radius:50%;background:#cf9742}.resource-thresholds .critical i{background:#bd6470}@media(max-width:420px){.host-utilization{font-size:8px}.host-utilization.unknown{font-size:7px}.resource-thresholds{font-size:8px;gap:10px}}
+.topology-wrap{margin:0 0 24px}.gateway-banner{background:#152c37;color:#e7f2ef;border-radius:12px;padding:16px 22px;margin-bottom:14px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px}.gateway-route{display:flex;align-items:center;flex-wrap:wrap;gap:10px;font-size:11px;font-weight:600}.gateway-node{padding:5px 10px;border-radius:6px;background:#1f3d4a;border:1px solid #2e5463;font:10px/1.4 var(--mono);color:#c8ebe0}.gateway-node.active{background:#0e5c49;border-color:#268e73;color:#eafff7}.gateway-arrow{color:#79a79d;font-size:12px}.gateway-stats{display:flex;flex-wrap:wrap;gap:18px;font-size:10px;color:#9fc0b9}.gateway-stats strong{color:#fff;font-family:var(--mono)}.pod-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.pod-card{border:1px solid var(--line);background:#fff;border-radius:12px;overflow:hidden;min-width:0;position:relative}.pod-card.active-pod{border-color:#8bc9b3;box-shadow:0 4px 18px #007e660d}.pod-card.active-pod:before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:var(--green)}.pod-card.candidate-pod:before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:#d79032}.pod-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:20px 22px 14px}.pod-title{margin:0;font-size:14px;font-weight:700;letter-spacing:-.2px;display:flex;align-items:center;gap:8px}.pod-sub{font:10px/1.5 var(--mono);color:var(--muted);margin:4px 0 0}.pod-traffic-box{padding:0 22px 15px;border-bottom:1px solid #edf1eb}.pod-traffic-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:10px;margin-bottom:6px}.pod-traffic-share{font:700 13px/1.3 var(--mono);color:#145847}.pod-card.standby-pod .pod-traffic-share{color:#6f8084}.pod-traffic-rate{font:10px/1.4 var(--mono);color:#5a7175}.pod-traffic-track{height:6px;border-radius:4px;background:#edf2ee;overflow:hidden}.pod-traffic-track span{display:block;height:100%;background:linear-gradient(90deg,#007e66,#24a88b);border-radius:4px;transition:width .35s}.pod-card.standby-pod .pod-traffic-track span{background:#b4c2be}.pod-build{padding:14px 22px;background:#f9fbf8;border-bottom:1px solid #edf1eb;font-size:10px;line-height:1.6}.pod-build-row{display:flex;justify-content:space-between;gap:12px}.pod-build-row+.pod-build-row{margin-top:5px}.pod-build-label{color:#7c8c90;flex:none}.pod-build-val{font-family:var(--mono);color:#2d484f;text-align:right;overflow-wrap:anywhere}.pod-build-val a{color:#0b7259;font-weight:650}.pod-commit-msg{margin:7px 0 0;color:#5c6f74;font-size:10px;line-height:1.5;overflow-wrap:anywhere}.pod-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;padding:15px 22px 18px}.pod-stat-label{display:block;font-size:9px;font-weight:650;color:#738589;text-transform:uppercase;letter-spacing:.4px}.pod-stat-val{display:block;font:600 15px/1.35 var(--mono);color:#1f3a3d;margin:5px 0 3px;white-space:nowrap}.pod-stat-note{display:block;font-size:9px;color:#859497;line-height:1.45}@media(max-width:900px){.pod-grid{grid-template-columns:minmax(0,1fr)}.pod-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 `;
 
@@ -464,6 +465,102 @@ function dashboardClient() {
     tickResources();
   }
 
+  function renderTopology(data) {
+    const topo = data?.topology || data?.rollback?.topology;
+    const gwEl = $('topologyGateway'), podsEl = $('topologyPods'), refreshEl = $('topologyRefresh');
+    if (!gwEl || !podsEl) return;
+    if (!topo || !Array.isArray(topo.pods)) {
+      gwEl.innerHTML = '<div class="gateway-route"><span class="gateway-node">Cloudflare / Caddy :443</span><span class="gateway-arrow">→</span><span class="gateway-node">chessgate :8079</span><span class="gateway-arrow">→</span><span class="gateway-node active">Inspecting Mumbai pods…</span></div><div class="gateway-stats"><span>Auto-deploy to all pods: <strong>Enabled</strong></span></div>';
+      podsEl.innerHTML = '';
+      return;
+    }
+    const gw = topo.gateway || {}, scale = topo.autoscale || {};
+    const pods = topo.pods;
+    const activePod = pods.find(p => p.role === 'active');
+    if (refreshEl) refreshEl.textContent = '5s pod & traffic sampling' + (topo.sampledAtMs ? ' · ' + sampleClock(new Date(topo.sampledAtMs).toISOString()) : '');
+    const gwPhase = gw.phase === 'active' ? 'ACTIVE' : (gw.phase || 'READY').toUpperCase();
+    const clients = number(gw.connectedClients) ? gw.connectedClients : (activePod?.traffic?.webSockets ?? 0);
+    const activeReq = number(gw.activeRequests) ? gw.activeRequests : 0;
+    const queuedReq = number(gw.queuedRequests) ? gw.queuedRequests : 0;
+    gwEl.innerHTML =
+      '<div class="gateway-route">' +
+        '<span class="gateway-node">Cloudflare / Caddy :443</span>' +
+        '<span class="gateway-arrow" aria-hidden="true">→</span>' +
+        '<span class="gateway-node active">chessgate (' + safe(gw.listen || '127.0.0.1:8079') + ' · ' + safe(gwPhase) + ')</span>' +
+        '<span class="gateway-arrow" aria-hidden="true">→</span>' +
+        '<span class="gateway-node active">' + safe(activePod ? activePod.name + ' (' + activePod.endpoint + ')' : gw.currentUpstream || 'upstream') + '</span>' +
+      '</div>' +
+      '<div class="gateway-stats">' +
+        '<span>Live sockets: <strong>' + safe(clients) + '</strong></span>' +
+        '<span>Gateway in-flight / queued: <strong>' + safe(activeReq + ' / ' + queuedReq) + '</strong></span>' +
+        '<span>Auto-scale: <strong>' + safe((scale.activePods || 1) + ' active / ' + (scale.totalPods || pods.length) + ' slots · OKE HPA ' + (scale.minPods || 2) + '–' + (scale.maxPods || 8) + ' pods') + '</strong></span>' +
+        '<span>Deploy policy: <strong>Auto-apply to all pods (DB pool ' + safe(scale.oraclePoolPerPod || 8) + ', KV cache ' + safe((scale.kvCacheTtlMs || 5000) / 1000) + 's)</strong></span>' +
+      '</div>';
+
+    const gitBase = (data?.production?.gitLink || 'https://github.com/ChessAlive/ChessAlive').replace(/\/commit\/[^/]+$/, '');
+    podsEl.innerHTML = pods.map(pod => {
+      const isActive = pod.role === 'active';
+      const isCandidate = pod.role === 'candidate';
+      const cardClass = 'pod-card ' + (isActive ? 'active-pod' : isCandidate ? 'candidate-pod' : 'standby-pod');
+      const badgeClass = isActive ? 'green' : isCandidate ? 'orange' : '';
+      const badgeLabel = isActive
+        ? (pod.writer ? 'ACTIVE WRITER · 100% TRAFFIC' : 'ACTIVE REPLICA')
+        : isCandidate
+          ? 'PROMOTING CANDIDATE'
+          : (pod.state === 'standby' ? 'WARM STANDBY · 0% TRAFFIC' : 'RETAINED FALLBACK · 0% TRAFFIC');
+      const share = number(pod.traffic?.trafficSharePercent) ? pod.traffic.trafficSharePercent : (isActive ? 100 : 0);
+      const rps = number(pod.traffic?.requestsPerSecond) ? pod.traffic.requestsPerSecond.toFixed(2) + ' req/s' : (isActive ? '0.00 req/s (sampling)' : '0.00 req/s');
+      const totalReqs = number(pod.traffic?.httpRequestsTotal) ? pod.traffic.httpRequestsTotal.toLocaleString() + ' total reqs' : (isActive ? 'Measuring' : '0 reqs (standby)');
+      const inFlight = number(pod.traffic?.activeRequests) ? pod.traffic.activeRequests : 0;
+      const ws = number(pod.traffic?.webSockets) ? pod.traffic.webSockets : 0;
+      const chatWs = number(pod.traffic?.chatSockets) ? pod.traffic.chatSockets : 0;
+      const rooms = number(pod.traffic?.residentRooms) ? pod.traffic.residentRooms : 0;
+      const users5m = number(pod.traffic?.activeUsers5m) ? pod.traffic.activeUsers5m : 0;
+      const commit = pod.build?.commitHash || '';
+      const commitShort = commit ? commit.slice(0, 12) : 'Unavailable';
+      const commitHref = commit ? safeUrl(gitBase + '/commit/' + commit) : '#';
+      const mem = resourceBytes(pod.resources?.memoryBytes);
+      const dbInUse = number(pod.resources?.dbPoolInUse) ? pod.resources.dbPoolInUse : 0;
+      const dbMax = number(pod.resources?.dbPoolMax) ? pod.resources.dbPoolMax : 8;
+      const bgMax = number(pod.resources?.dbBackgroundMax) ? pod.resources.dbBackgroundMax : 2;
+      const hits = number(pod.resources?.cacheHits) ? pod.resources.cacheHits : 0;
+      const misses = number(pod.resources?.cacheMisses) ? pod.resources.cacheMisses : 0;
+      const cachePct = hits + misses > 0 ? ((hits / (hits + misses)) * 100).toFixed(1) + '% cache hit' : 'KV cache ready';
+      return '<article class="' + cardClass + '">' +
+        '<div class="pod-head">' +
+          '<div>' +
+            '<h3 class="pod-title">' + icon('server') + safe(pod.name || pod.id) + '</h3>' +
+            '<p class="pod-sub">' + safe((pod.endpoint || '—') + ' · state: ' + (pod.state || 'unknown') + ' · systemd: ' + (pod.systemdState || '—')) + '</p>' +
+          '</div>' +
+          '<span class="badge ' + badgeClass + '"><span class="dot" aria-hidden="true"></span>' + safe(badgeLabel) + '</span>' +
+        '</div>' +
+        '<div class="pod-traffic-box">' +
+          '<div class="pod-traffic-head">' +
+            '<span class="pod-traffic-share">' + safe(share.toFixed(1) + '% live traffic') + '</span>' +
+            '<span class="pod-traffic-rate">' + safe(rps + ' · ' + totalReqs + ' · ' + inFlight + ' in-flight') + '</span>' +
+          '</div>' +
+          '<div class="pod-traffic-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + Math.round(share) + '">' +
+            '<span style="width:' + Math.min(100, Math.max(0, share)) + '%"></span>' +
+          '</div>' +
+        '</div>' +
+        '<div class="pod-build">' +
+          '<div class="pod-build-row"><span class="pod-build-label">Release build ID</span><span class="pod-build-val">' + safe(pod.releaseId || 'Unassigned') + '</span></div>' +
+          '<div class="pod-build-row"><span class="pod-build-label">Git commit SHA</span><span class="pod-build-val">' + (commit ? '<a href="' + commitHref + '" target="_blank" rel="noopener noreferrer">' + safe(commitShort) + ' ↗</a>' : '—') + (pod.build?.commitDate ? ' · ' + safe(date(pod.build.commitDate)) : '') + '</span></div>' +
+          '<div class="pod-build-row"><span class="pod-build-label">Web asset bundle</span><span class="pod-build-val">' + safe(pod.build?.version || '—') + '</span></div>' +
+          (pod.build?.commitMessage ? '<p class="pod-commit-msg">' + safe(pod.build.commitMessage) + '</p>' : '') +
+        '</div>' +
+        '<div class="pod-stats">' +
+          '<div><span class="pod-stat-label">Traffic rate</span><strong class="pod-stat-val">' + safe(rps) + '</strong><span class="pod-stat-note">' + safe(totalReqs) + '</span></div>' +
+          '<div><span class="pod-stat-label">WebSockets</span><strong class="pod-stat-val">' + safe(String(ws)) + '</strong><span class="pod-stat-note">' + safe(chatWs + ' chat sockets') + '</span></div>' +
+          '<div><span class="pod-stat-label">Live game rooms</span><strong class="pod-stat-val">' + safe(String(rooms)) + '</strong><span class="pod-stat-note">' + safe(users5m + ' active players (5m)') + '</span></div>' +
+          '<div><span class="pod-stat-label">Pod RAM &amp; DB pool</span><strong class="pod-stat-val">' + safe(mem) + '</strong><span class="pod-stat-note">' + safe('DB ' + dbInUse + '/' + dbMax + ' (bg ' + bgMax + ') · ' + cachePct) + '</span></div>' +
+        '</div>' +
+      '</article>';
+    }).join('');
+    const activeSlotEl = $('activePodSlot');
+    if (activeSlotEl) activeSlotEl.textContent = activePod ? (activePod.slot + ' (:' + activePod.port + ') · ' + (activePod.traffic?.webSockets ?? 0) + ' WS / ' + (activePod.traffic?.residentRooms ?? 0) + ' rooms') : '—';
+  }
+
   function render(data) {
     snapshot = data; receivedAt = performance.now(); connection(true);
     const release = data.release || {}, monitor = data.monitor || {}, prod = data.production || {}, steps = release.steps || [], running = release.status === 'running';
@@ -505,6 +602,7 @@ function dashboardClient() {
       if ($('autoscroll').checked) $('log').scrollTop = $('log').scrollHeight;
     }
     $('downloadLog').disabled = !log;
+    renderTopology(data);
     renderResources(data.resources);
     tick();
   }
@@ -593,14 +691,14 @@ export const loginHtml = head('Sign in · ChessAlive Operations') + String.raw`
 export const dashboardHtml = head('Release center · ChessAlive Operations') + String.raw`
 <body><header class="topbar"><div class="topbar-inner"><a class="brand" href="/" aria-label="ChessAlive release console"><img class="brand-mark" src="/branding/chessalive-logo.png?v=8" width="38" height="38" alt="">ChessAlive<span class="brand-sub">OPERATIONS</span></a><span class="nav-current">Release center</span><div class="top-right"><a id="headerProduction" class="link" href="#" target="_blank" rel="noopener noreferrer">Open production<span aria-hidden="true">↗</span></a><span class="avatar" title="Operations console" aria-hidden="true">OP</span></div></div></header>
 <main class="shell"><div class="page-heading"><div><p class="breadcrumb">Operations <span>/</span> Release center</p><h1>Release command center</h1><p class="page-subtitle">A clear view of every build, from source to production.</p></div><div id="connection" class="connection" role="status"><span class="dot" aria-hidden="true"></span><span id="connectionLabel">Connecting to Hyderabad</span></div></div>
-<section class="hero" aria-label="Release controls"><div><p class="hero-kicker"><span class="dot" aria-hidden="true"></span>CHESSALIVE RELEASE PIPELINE</p><div class="route"><div class="route-city">Hyderabad<span class="route-label">Build &amp; validation</span></div><div class="route-arrow" aria-hidden="true"></div><div class="route-city">Mumbai<span class="route-label">Production deployment</span></div></div><p class="hero-copy">Latest source. Verified artifacts. Atomic deployment.</p></div><div class="hero-action"><p id="runLabel" class="run-label mono">READY WHEN YOU ARE</p><div class="release-actions"><button id="release" class="primary" disabled><span id="releaseLabel">Build &amp; deploy</span><span class="arrow" aria-hidden="true">↗</span></button><button id="rollback" class="secondary" title="Restore previous release" aria-describedby="rollbackNote" disabled><span id="rollbackLabel">Roll back</span><span aria-hidden="true">↶</span></button></div><p id="releaseStarted" class="hero-action-note">Build, verify, and publish to production</p><p id="rollbackNote" class="rollback-note">Checking for a previous release</p></div></section>
+<section class="hero" aria-label="Release controls"><div><p class="hero-kicker"><span class="dot" aria-hidden="true"></span>CHESSALIVE RELEASE PIPELINE · AUTO-SCALE READY</p><div class="route"><div class="route-city">Hyderabad<span class="route-label">Build &amp; validation (129.159.238.18)</span></div><div class="route-arrow" aria-hidden="true"></div><div class="route-city">Mumbai<span class="route-label">Production pods (161.118.175.12)</span></div></div><p class="hero-copy">Latest source. Verified artifacts. Automatically applies &amp; scales to all active pods and slots.</p></div><div class="hero-action"><p id="runLabel" class="run-label mono">READY WHEN YOU ARE</p><div class="release-actions"><button id="release" class="primary" disabled><span id="releaseLabel">Build &amp; deploy</span><span class="arrow" aria-hidden="true">↗</span></button><button id="rollback" class="secondary" title="Restore previous release" aria-describedby="rollbackNote" disabled><span id="rollbackLabel">Roll back</span><span aria-hidden="true">↶</span></button></div><p id="releaseStarted" class="hero-action-note">Build, verify, and publish to all pods</p><p id="rollbackNote" class="rollback-note">Checking for a previous release</p></div></section>
 <div id="notice" class="notice" role="alert" hidden></div>
 <section class="metrics" aria-label="Release metrics"><div class="metric"><div class="metric-label">Total elapsed<span id="elapsedIcon" class="metric-icon" aria-hidden="true"></span></div><p id="totalTime" class="metric-value mono">0s</p><p id="totalTimeNote" class="metric-note">From start to production verification</p></div><div class="metric"><div class="metric-label">Peak build memory<span id="memoryIcon" class="metric-icon" aria-hidden="true"></span></div><p id="peakMemory" class="metric-value mono">—</p><p id="peakMemoryNote" class="metric-note">Measured during the next build</p></div><div class="metric"><div class="metric-label">Current stage<span id="stageIcon" class="metric-icon" aria-hidden="true"></span></div><p id="activeStep" class="metric-value metric-active">Ready to begin</p><p id="activeTime" class="metric-note">Waiting for the next release</p></div></section>
-<section class="infrastructure" aria-labelledby="infrastructureTitle"><div class="infrastructure-heading"><div><h2 id="infrastructureTitle">Infrastructure</h2><p>Observed host usage and available capacity, across both regions.</p></div><span id="resourceRefresh" class="resource-refresh">10s sampling</span></div><div id="resourceHosts" class="resource-hosts"></div><p class="resource-thresholds"><span>Bars show observed usage</span><span><i aria-hidden="true"></i>High ≥85%</span><span class="critical"><i aria-hidden="true"></i>Attention ≥95%</span></p><div class="infrastructure-heading provider-heading"><div><h3>Cloud accounts &amp; managed database</h3><p>Two separate Oracle Cloud accounts. Provider consumption, quotas, and free-tier eligibility are distinct.</p></div><span id="providerRefresh" class="resource-refresh">5min provider sampling</span></div><div id="providerHosts" class="resource-hosts"></div></section>
+<section class="infrastructure" aria-labelledby="infrastructureTitle"><div class="topology-wrap"><div class="infrastructure-heading"><div><h2>Live pods, build distribution &amp; traffic routing</h2><p>Real-time view of which build is running in each pod/slot, live traffic share, WebSockets, game rooms, and auto-scaling state.</p></div><span id="topologyRefresh" class="resource-refresh">5s pod sampling</span></div><div id="topologyGateway" class="gateway-banner"></div><div id="topologyPods" class="pod-grid"></div></div><div class="infrastructure-heading"><div><h2 id="infrastructureTitle">Infrastructure</h2><p>Observed host usage and available capacity across Hyderabad (build) and Mumbai (production).</p></div><span id="resourceRefresh" class="resource-refresh">10s sampling</span></div><div id="resourceHosts" class="resource-hosts"></div><p class="resource-thresholds"><span>Bars show observed usage</span><span><i aria-hidden="true"></i>High ≥85%</span><span class="critical"><i aria-hidden="true"></i>Attention ≥95%</span></p><div class="infrastructure-heading provider-heading"><div><h3>Cloud accounts &amp; managed database</h3><p>Two separate Oracle Cloud accounts. Provider consumption, quotas, and free-tier eligibility are distinct.</p></div><span id="providerRefresh" class="resource-refresh">5min provider sampling</span></div><div id="providerHosts" class="resource-hosts"></div></section>
 <div class="content-grid"><div class="main-column"><section class="card"><div class="card-header"><div><h2 class="card-title">Release pipeline</h2><p id="pipelineSubtitle" class="card-subtitle">Every stage, measured from start to finish</p></div><span id="releaseState" class="badge">Connecting</span></div><div class="pipeline-summary"><div class="pipeline-track" role="progressbar" aria-label="Pipeline stages complete" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"><span id="pipelineProgress" style="width:0%"></span></div><span id="pipelineCount" class="pipeline-count mono">0 / 0 complete</span></div><div class="pipeline-columns" aria-hidden="true"><span>Build stage</span><span>Elapsed</span><span>Peak RSS</span></div><ol id="timeline" class="timeline"><li class="empty" style="padding:20px 23px">Connecting to the build host…</li></ol><div class="pipeline-foot">Bars compare each step with the longest step. Pending times and unavailable memory appear as —.</div></section>
 <section class="card logs-card"><div class="card-header"><h2 class="card-title"><span class="terminal-icon" aria-hidden="true">&gt;_</span> Build output</h2><div class="log-actions"><label class="autoscroll"><input id="autoscroll" type="checkbox" checked>Auto-scroll</label><button id="downloadLog" class="small-button" disabled>Save log <span aria-hidden="true">↓</span></button></div></div><pre id="log" class="log" tabindex="0" aria-label="Recent release output">Ready. Start a release to follow the build output here.</pre><div class="logs-foot"><span id="logStatus">Output will appear when a release starts</span><span>Latest 14 KB</span></div></section></div>
 <aside class="sidebar" aria-label="Build resources and production status"><section class="card memory-card"><div class="card-header"><h2 class="card-title">Memory profile</h2><span id="memoryStatus" class="card-subtitle" style="margin:0">No live sample</span></div><div class="memory-values"><strong id="currentMemory" class="memory-current mono">—</strong><span id="memoryLabel" class="memory-unit-note">current process RSS</span></div><div id="memoryChart" class="chart-box"><div class="chart-empty">Memory history appears during a build</div></div><div class="chart-scale"><span id="chartStart">—</span><span id="chartEnd">—</span></div><div class="memory-foot">Sampled resident memory across the build process tree. Overlapping steps share the same memory scope; shared pages may be counted more than once.</div></section>
-<section class="card"><div class="card-header"><h2 class="card-title">Production</h2><span id="productionStatus" class="badge">Waiting</span></div><div class="side-body"><a id="productionLink" class="production-link" href="#" target="_blank" rel="noopener noreferrer"><span id="productionHost">chessalive.com</span><span aria-hidden="true">↗</span></a><dl class="metadata"><div class="metadata-row"><dt>Region</dt><dd>Mumbai</dd></div><div class="metadata-row"><dt>Live version</dt><dd id="version" class="mono">—</dd></div><div class="metadata-row"><dt>Built at</dt><dd id="deployed">—</dd></div><div class="metadata-row"><dt>Source commit</dt><dd><a id="commit" class="mono" href="#" target="_blank" rel="noopener noreferrer">—</a></dd></div></dl><p id="commitMessage" class="commit-message">Loading source commit metadata…</p></div></section>
+<section class="card"><div class="card-header"><h2 class="card-title">Production</h2><span id="productionStatus" class="badge">Waiting</span></div><div class="side-body"><a id="productionLink" class="production-link" href="#" target="_blank" rel="noopener noreferrer"><span id="productionHost">chessalive.com</span><span aria-hidden="true">↗</span></a><dl class="metadata"><div class="metadata-row"><dt>Region</dt><dd>Mumbai (161.118.175.12)</dd></div><div class="metadata-row"><dt>Active pod</dt><dd id="activePodSlot" class="mono">—</dd></div><div class="metadata-row"><dt>Live version</dt><dd id="version" class="mono">—</dd></div><div class="metadata-row"><dt>Built at</dt><dd id="deployed">—</dd></div><div class="metadata-row"><dt>Source commit</dt><dd><a id="commit" class="mono" href="#" target="_blank" rel="noopener noreferrer">—</a></dd></div></dl><p id="commitMessage" class="commit-message">Loading source commit metadata…</p></div></section>
 <section class="card"><div class="card-header"><h2 class="card-title">Production health</h2><span id="monitorState" class="badge">Waiting</span></div><div class="side-body"><p id="monitorSummary" class="monitor-description">Waiting for the first production check.</p><div id="checks" class="checks"></div><div id="monitorTime" class="monitor-foot">Checks run every hour</div></div></section>
 <section class="card notification-card"><div class="card-header"><h2 class="card-title">Notifications</h2><span id="mailStatus" class="badge">Waiting</span></div><div class="side-body"><p class="notification-copy">Release results and production incident alerts go to your operations team.</p><ul id="admins" class="admins"></ul><p id="mailNote" class="mail-note">Checking delivery configuration…</p></div></section></aside></div>
 <footer class="footer"><span class="footer-brand">ChessAlive Operations <span aria-hidden="true">·</span> Hyderabad → Mumbai</span><span>Status refreshes every 2 seconds · Production checks run hourly</span></footer></main><script>(` + dashboardClient.toString() + ')();</script></body></html>';
