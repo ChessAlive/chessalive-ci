@@ -55,7 +55,7 @@ set -euo pipefail
 SOURCE_ROOT="${SOURCE_ROOT:-/opt/chessalive}"
 ROOT_DIR="${SOURCE_ROOT}"
 
-OCI_HOST="${OCI_HOST:-144.24.117.171}"
+OCI_HOST="${OCI_HOST:-161.118.175.12}"
 OCI_USER="${OCI_USER:-ubuntu}"
 SSH_KEY="${SSH_KEY:-}"
 REMOTE_ROOT="${REMOTE_ROOT:-/opt/chessalive}"

@@ -75,7 +75,7 @@ const state = {
 };
 const resources = createResourceMonitor({
   enabled: process.env.BUILD_RESOURCE_MONITOR_ENABLED !== 'no',
-  remoteHost: process.env.DEPLOY_HOST || '144.24.117.171',
+  remoteHost: process.env.DEPLOY_HOST || '161.118.175.12',
   remoteUser: process.env.DEPLOY_USER || 'ubuntu',
   remoteKey: process.env.DEPLOY_SSH_KEY || undefined,
   intervalMs: process.env.BUILD_RESOURCE_MONITOR_INTERVAL_MS,

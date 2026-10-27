@@ -96,7 +96,7 @@ SKIP_DEPLOY="${SKIP_DEPLOY:-no}"
 # Build-only invocations stay read-only unless content publishing is requested.
 SKIP_CONTENT="${SKIP_CONTENT:-${SKIP_DEPLOY}}"
 DEPLOY_REMOTE="${DEPLOY_REMOTE:-no}"
-DEPLOY_HOST="${DEPLOY_HOST:-144.24.117.171}"
+DEPLOY_HOST="${DEPLOY_HOST:-161.118.175.12}"
 DEPLOY_USER="${DEPLOY_USER:-ubuntu}"
 DEPLOY_SSH_KEY="${DEPLOY_SSH_KEY:-}"
 SKIP_WEB_SETUP="${SKIP_WEB_SETUP:-no}"

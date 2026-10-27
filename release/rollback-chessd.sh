@@ -9,7 +9,7 @@ case "${1:-}" in
   *) echo 'Usage: rollback-chessd.sh [--status]' >&2; exit 64 ;;
 esac
 [[ "$#" -le 1 ]] || exit 64
-OCI_HOST="${DEPLOY_HOST:-${OCI_HOST:-144.24.117.171}}"
+OCI_HOST="${DEPLOY_HOST:-${OCI_HOST:-161.118.175.12}}"
 OCI_USER="${DEPLOY_USER:-${OCI_USER:-ubuntu}}"
 SSH_KEY="${DEPLOY_SSH_KEY:-${SSH_KEY:-}}"
 REMOTE_ROOT="${REMOTE_ROOT:-/opt/chessalive}"

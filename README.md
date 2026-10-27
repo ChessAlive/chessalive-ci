@@ -26,7 +26,7 @@ required model URL. A code release fails when reviewed content has not been publ
 health response alone is insufficient. Publish approved content separately with:
 
 ```sh
-SOURCE_ROOT=/opt/chessalive OCI_HOST=144.24.117.171 OCI_USER=ubuntu \
+SOURCE_ROOT=/opt/chessalive OCI_HOST=161.118.175.12 OCI_USER=ubuntu \
   SSH_KEY=/home/opc/.ssh/chessalive-deploy MIGRATE_BIN=remote CONTENT_PRUNE=report \
   bash content/publish-content.sh --dry-run
 # After reviewing the plan, run the same command without --dry-run.

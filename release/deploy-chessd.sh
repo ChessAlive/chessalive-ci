@@ -34,7 +34,7 @@ deploy_progress_exit() {
 trap 'deploy_progress_exit "$?"' EXIT
 progress_mark deploy running
 
-OCI_HOST="${OCI_HOST:-144.24.117.171}"
+OCI_HOST="${OCI_HOST:-161.118.175.12}"
 OCI_USER="${OCI_USER:-ubuntu}"
 SSH_KEY="${SSH_KEY:-}"
 LOCAL_DEPLOY="${LOCAL_DEPLOY:-no}"
