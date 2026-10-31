@@ -953,16 +953,25 @@ def main():
         return
     platform.releases.mkdir(parents=True, exist_ok=True)
     lock = (platform.releases / "transaction.lock").open("a+")
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        if args.mode == "status":
+    if args.mode == "status":
+        try:
+            fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            lock.close()
             print(json.dumps(platform.status(busy=True)))
             return
-        raise RuntimeError("Another deployment or rollback is running")
-    if args.mode == "status":
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        lock.close()
         print(json.dumps(platform.status()))
         return
+    for attempt in range(5):
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if attempt == 4:
+                raise RuntimeError("Another deployment or rollback is running")
+            time.sleep(0.01)
     if args.mode == "recover":
         recover_interrupted(platform)
         return
