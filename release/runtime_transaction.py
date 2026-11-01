@@ -221,6 +221,15 @@ class Platform:
                 shutil.rmtree(path)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.symlink_to(directory / target)
+        subdomain_dir = Path("/etc/chessalive-subdomains")
+        if self.root == ROOT and subdomain_dir.is_dir():
+            for page in ("academies.html", "academies-demo.html"):
+                target_page = directory / "web" / page
+                link_path = subdomain_dir / page
+                if target_page.is_file():
+                    if link_path.is_symlink() or link_path.is_file():
+                        link_path.unlink()
+                    link_path.symlink_to(target_page)
 
     def complete(self, current, candidate):
         atomic_json(self.state_file, {"schemaVersion": 1, "current": candidate, "previous": current})

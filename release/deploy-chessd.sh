@@ -223,6 +223,7 @@ say "Deployed"
 # Ask the RUNNING service, not the binary: `chessd --version` starts a fresh process with no
 # EnvironmentFile, so it fails config validation and prints a scary (meaningless) error.
 remote "systemctl is-active chessgate"
+remote 'curl -fsSI -H "Host: academy.chessalive.com" http://127.0.0.1:8079/ | grep -iE "^(HTTP/|x-page-version:|cache-control:)" || true'
 curl -fsS --max-time 10 "${PUBLIC_URL:-https://chessalive.com}/version" 2>/dev/null || true
 echo
 echo "${PUBLIC_URL:-https://chessalive.com}"
