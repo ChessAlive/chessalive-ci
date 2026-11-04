@@ -11,6 +11,51 @@ set -euo pipefail
 
 CI_ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${CI_ROOT_DIR}/release/progress.sh"
+
+low_mem_host="no"
+total_mem_kb="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 16777216)"
+if (( total_mem_kb < 2097152 )); then
+  low_mem_host="yes"
+fi
+
+# When running on an Always Free E2.1.Micro (1 GB RAM) control plane with a remote 12 GB ARM64 host
+# configured, delegate heavy compilation and bundle steps over SSH to the remote host so the build
+# finishes in minutes without exhausting control-plane memory.
+if [[ "${low_mem_host}" == yes && "${DEPLOY_REMOTE:-no}" == yes && -n "${DEPLOY_HOST:-}" && -n "${DEPLOY_SSH_KEY:-}" && -r "${DEPLOY_SSH_KEY:-}" && "${DELEGATE_LOW_MEM_BUILD:-yes}" == yes ]]; then
+  echo "Delegating build execution to high-memory host ${DEPLOY_USER:-ubuntu}@${DEPLOY_HOST}"
+  ssh -i "${DEPLOY_SSH_KEY}" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+    "${DEPLOY_USER:-ubuntu}@${DEPLOY_HOST}" \
+    "set -a; sudo cat /etc/chessalive.env > /tmp/.ca-build-env.$$ && source /tmp/.ca-build-env.$$ && rm -f /tmp/.ca-build-env.$$; set +a; \
+     export CHESSALIVE_PROGRESS='${CHESSALIVE_PROGRESS:-no}' \
+            SOURCE_DIR='/opt/chessalive/repo' \
+            SYNC_SOURCE='${SYNC_SOURCE:-yes}' \
+            SOURCE_GIT_URL='${SOURCE_GIT_URL:-git@github.com:ChessAlive/ChessAlive.git}' \
+            SOURCE_GIT_REF='${SOURCE_GIT_REF:-main}' \
+            SOURCE_SSH_KEY='/home/ubuntu/.ssh/chessalive_ci_deploy' \
+            SKIP_TESTS='${SKIP_TESTS:-no}' \
+            SKIP_FULL_TESTS='${SKIP_FULL_TESTS:-yes}' \
+            SKIP_WEB_SETUP='${SKIP_WEB_SETUP:-yes}' \
+            SKIP_BUDGETS='${SKIP_BUDGETS:-yes}' \
+            SKIP_ASSETS='${SKIP_ASSETS:-yes}' \
+            SKIP_CONTENT='${SKIP_CONTENT:-no}' \
+            SKIP_DEPLOY='${SKIP_DEPLOY:-no}' \
+            DEPLOY_REMOTE='no' \
+            LOCAL_DEPLOY='yes' \
+            PUBLIC_URL='${PUBLIC_URL:-https://chessalive.com}' \
+            DELEGATE_LOW_MEM_BUILD='no'; \
+     bash /opt/chessalive-ci/release/local-release.sh"
+  rc="$?"
+  if (( rc == 0 )) && [[ -n "${SOURCE_DIR:-}" ]]; then
+    ssh -i "${DEPLOY_SSH_KEY}" -o IdentitiesOnly=yes -o BatchMode=yes "${DEPLOY_USER:-ubuntu}@${DEPLOY_HOST}" \
+      "cat /opt/chessalive/repo/.source-commit 2>/dev/null" > "${SOURCE_DIR}/.source-commit" 2>/dev/null || true
+    ssh -i "${DEPLOY_SSH_KEY}" -o IdentitiesOnly=yes -o BatchMode=yes "${DEPLOY_USER:-ubuntu}@${DEPLOY_HOST}" \
+      "cat /opt/chessalive/repo/.source-commit-message 2>/dev/null" > "${SOURCE_DIR}/.source-commit-message" 2>/dev/null || true
+    ssh -i "${DEPLOY_SSH_KEY}" -o IdentitiesOnly=yes -o BatchMode=yes "${DEPLOY_USER:-ubuntu}@${DEPLOY_HOST}" \
+      "cat /opt/chessalive/repo/.source-commit-date 2>/dev/null" > "${SOURCE_DIR}/.source-commit-date" 2>/dev/null || true
+  fi
+  exit "${rc}"
+fi
+
 trap 'progress_on_exit "$?"' EXIT
 progress_mark prepare running
 SOURCE_DIR="${SOURCE_DIR:-/opt/chessalive}"
