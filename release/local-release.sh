@@ -25,7 +25,12 @@ if [[ "${low_mem_host}" == yes && "${DEPLOY_REMOTE:-no}" == yes && -n "${DEPLOY_
   echo "Delegating build execution to high-memory host ${DEPLOY_USER:-ubuntu}@${DEPLOY_HOST}"
   ssh -i "${DEPLOY_SSH_KEY}" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
     "${DEPLOY_USER:-ubuntu}@${DEPLOY_HOST}" \
-    "set -a; sudo cat /etc/chessalive.env > /tmp/.ca-build-env.$$ && source /tmp/.ca-build-env.$$ && rm -f /tmp/.ca-build-env.$$; set +a; \
+    "while IFS='=' read -r k v; do
+       [[ -n \"\${k}\" && \"\${k}\" != \\#* ]] || continue
+       v=\"\${v%\\\"}\"; v=\"\${v#\\\"}\"
+       v=\"\${v%\\'}\"; v=\"\${v#\\'}\"
+       export \"\${k}=\${v}\"
+     done < <(sudo cat /etc/chessalive.env 2>/dev/null || true); \
      export CHESSALIVE_PROGRESS='${CHESSALIVE_PROGRESS:-no}' \
             SOURCE_DIR='/opt/chessalive/repo' \
             SYNC_SOURCE='${SYNC_SOURCE:-yes}' \

@@ -58,6 +58,7 @@ ROOT_DIR="${SOURCE_ROOT}"
 OCI_HOST="${OCI_HOST:-161.118.175.12}"
 OCI_USER="${OCI_USER:-ubuntu}"
 SSH_KEY="${SSH_KEY:-}"
+LOCAL_DEPLOY="${LOCAL_DEPLOY:-no}"
 REMOTE_ROOT="${REMOTE_ROOT:-/opt/chessalive}"
 UPLOAD_DIR="${UPLOAD_DIR:-${REMOTE_ROOT}/data/uploads}"
 PUBLIC_URL="${PUBLIC_URL:-https://chessalive.com}"
@@ -87,7 +88,15 @@ RUN_MIGRATE_SRC="${ROOT_DIR}/scripts/publish-ivory-combos/run-migrate.sh"
 SSH_OPTS=(-o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new)
 [[ -n "${SSH_KEY}" ]] && SSH_OPTS+=(-i "${SSH_KEY}")
 
-remote() { ssh "${SSH_OPTS[@]}" "${OCI_USER}@${OCI_HOST}" "$@"; }
+if [[ "${LOCAL_DEPLOY}" == yes ]]; then
+  remote() { bash -c "$*"; }
+  copy_to_host() { cp -p "$1" "$2"; }
+  sync_to_host() { rsync -rlt --checksum "$1" "$2"; }
+else
+  remote() { ssh "${SSH_OPTS[@]}" "${OCI_USER}@${OCI_HOST}" "$@"; }
+  copy_to_host() { scp "${SSH_OPTS[@]}" -q "$1" "${OCI_USER}@${OCI_HOST}:$2"; }
+  sync_to_host() { rsync -rlt --checksum -e "ssh ${SSH_OPTS[*]}" "$1" "${OCI_USER}@${OCI_HOST}:$2"; }
+fi
 
 say() { printf '\n\033[1m▶ %s\033[0m\n' "$*"; }
 die() { printf '\n\033[31m✖ %s\033[0m\n' "$*" >&2; exit 1; }
@@ -148,7 +157,7 @@ prune_files() {
         || die "${name} IS referenced by the merged catalog (matched ${probe}) — prune-plan and this re-check disagree; nothing deleted"
     done
   done < "${list}"
-  scp "${SSH_OPTS[@]}" -q "${list}" "${OCI_USER}@${OCI_HOST}:${STAGE}/prune-list.txt"
+  copy_to_host "${list}" "${STAGE}/prune-list.txt"
   remote "UPLOAD_DIR='${UPLOAD_DIR}' LIST='${STAGE}/prune-list.txt' bash -s" <<'REMOTE_PRUNE'
 set -euo pipefail
 deleted=0; missing=0
@@ -198,7 +207,7 @@ say "Uploading content/uploads to ${STAGE}"
 remote "mkdir -p '${STAGE}'"
 # -rlt: recurse, keep symlinks as symlinks, keep mtimes; --checksum: never trust size+mtime for
 # the "already there" decision. No -a: owner/group/mode on the box are decided by install(1).
-rsync -rlt --checksum -e "ssh ${SSH_OPTS[*]}" "${CONTENT_UPLOADS}/" "${OCI_USER}@${OCI_HOST}:${STAGE}/"
+sync_to_host "${CONTENT_UPLOADS}/" "${STAGE}/"
 
 say "Installing files into ${UPLOAD_DIR}${DRY_RUN:+ (dry run: reporting only)}"
 INSTALL_LOG="${WORK}/install.log"
@@ -299,11 +308,11 @@ say "Uploading ${MIGRATE_BIN:+migrate binary + }document"
 REMOTE_DOC="${STAGE}/migrate-doc.json"
 REMOTE_RUNNER="/tmp/run-migrate.sh"
 if [[ -n "${MIGRATE_BIN}" ]]; then
-  scp "${SSH_OPTS[@]}" -q "${MIGRATE_BIN}" "${OCI_USER}@${OCI_HOST}:${REMOTE_BIN}"
+  copy_to_host "${MIGRATE_BIN}" "${REMOTE_BIN}"
   remote "chmod +x '${REMOTE_BIN}'"
 fi
-scp "${SSH_OPTS[@]}" -q "${DOC}" "${OCI_USER}@${OCI_HOST}:${REMOTE_DOC}"
-scp "${SSH_OPTS[@]}" -q "${RUN_MIGRATE_SRC}" "${OCI_USER}@${OCI_HOST}:${REMOTE_RUNNER}"
+copy_to_host "${DOC}" "${REMOTE_DOC}"
+copy_to_host "${RUN_MIGRATE_SRC}" "${REMOTE_RUNNER}"
 remote "chmod +x '${REMOTE_RUNNER}'"
 MIGRATE_ARGS="--key app:state --file ${REMOTE_DOC} --only animationClips,animationSets,pieceSets,movementSets,appStateRevision"
 # The runner execs CHESSD_MIGRATE_BIN; sudo -n env … keeps that one variable across the privilege hop.
