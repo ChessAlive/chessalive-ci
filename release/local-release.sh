@@ -120,7 +120,19 @@ if [[ "${SKIP_INSTALL}" != yes ]]; then
   # The service also loads the production runtime environment so the built server matches Mumbai.
   # npm treats NODE_ENV=production as a request to omit devDependencies, but the release gate
   # itself needs TypeScript, ESLint, Vitest, Expo, and the build tooling. Explicitly include them.
-  step_run install npm ci --include=dev
+  lock_hash=""
+  if [[ -f package-lock.json ]]; then
+    lock_hash="$(sha256sum package-lock.json 2>/dev/null | awk '{print $1}' || shasum -a 256 package-lock.json 2>/dev/null | awk '{print $1}' || true)"
+  fi
+  if [[ -n "${lock_hash}" ]] && [[ -f node_modules/.package-lock.sha256 ]] && [[ "$(cat node_modules/.package-lock.sha256)" == "${lock_hash}" ]]; then
+    say "Dependencies up to date with package-lock.json (${lock_hash:0:12}); running fast install check"
+    step_run install echo "dependencies match package-lock.json (${lock_hash:0:12})"
+  else
+    step_run install npm ci --include=dev
+    if [[ -n "${lock_hash}" && -d node_modules ]]; then
+      printf '%s\n' "${lock_hash}" > node_modules/.package-lock.sha256
+    fi
+  fi
 else
   progress_mark install skipped
 fi
@@ -141,28 +153,44 @@ else
   for step in typecheck lint tests infra audit narration; do progress_mark "${step}" skipped; done
 fi
 
+low_mem_host="no"
+total_mem_kb="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 16777216)"
+if (( total_mem_kb < 2097152 )); then
+  low_mem_host="yes"
+fi
+
 browser_pid=""
 if [[ "${SKIP_WEB}" != yes && "${SKIP_WEB_SETUP}" != yes ]]; then
-  say 'Installing/verifying browser dependencies in parallel with native builds'
-  ( step_run browser npm run setup:web-browser ) &
-  browser_pid="$!"
+  if [[ "${low_mem_host}" == yes ]]; then
+    say 'Installing/verifying browser dependencies sequentially on low-memory host'
+    step_run browser npm run setup:web-browser
+  else
+    say 'Installing/verifying browser dependencies in parallel with native builds'
+    ( step_run browser npm run setup:web-browser ) &
+    browser_pid="$!"
+  fi
 else
   progress_mark browser skipped
 fi
 
-say "Building linux/${BUILD_ARCH} server artifacts in parallel"
+say "Building linux/${BUILD_ARCH} server artifacts"
 server_status=0
 migrate_status=0
 build_server_artifacts() {
   env BUILD_ARCH="${BUILD_ARCH}" npm run build:server:local || return "$?"
   env BUILD_ARCH="${BUILD_ARCH}" npm run build:gateway:local
 }
-( progress_run server build_server_artifacts ) &
-server_pid="$!"
-( progress_run migrate env BUILD_ARCH="${BUILD_ARCH}" npm run build:migrate:local ) &
-migrate_pid="$!"
-wait "${server_pid}" || server_status="$?"
-wait "${migrate_pid}" || migrate_status="$?"
+if [[ "${low_mem_host}" == yes ]]; then
+  progress_run server build_server_artifacts || server_status="$?"
+  progress_run migrate env BUILD_ARCH="${BUILD_ARCH}" npm run build:migrate:local || migrate_status="$?"
+else
+  ( progress_run server build_server_artifacts ) &
+  server_pid="$!"
+  ( progress_run migrate env BUILD_ARCH="${BUILD_ARCH}" npm run build:migrate:local ) &
+  migrate_pid="$!"
+  wait "${server_pid}" || server_status="$?"
+  wait "${migrate_pid}" || migrate_status="$?"
+fi
 browser_status=0
 if [[ -n "${browser_pid}" ]]; then
   wait "${browser_pid}" || browser_status="$?"
