@@ -60,7 +60,19 @@ if __name__ == "__main__":
         value = {}
         if release.parent == (args.root / "releases").resolve() and re.fullmatch(r"release-[a-z0-9-]+", release.name):
             try:
-                value = {"releaseId": release.name, "manifest": json.loads((release / "manifest.json").read_text())}
+                manifest = json.loads((release / "manifest.json").read_text())
+                files = manifest.get("files")
+                if isinstance(files, dict):
+                    verified = {}
+                    for name, checksum in files.items():
+                        if not isinstance(name, str) or not name.startswith("web/"):
+                            verified[name] = checksum
+                            continue
+                        path = release / name
+                        if not path.is_symlink() and path.is_file() and digest(path) == checksum:
+                            verified[name] = checksum
+                    manifest["files"] = verified
+                value = {"releaseId": release.name, "manifest": manifest}
             except (OSError, ValueError):
                 pass
         print(json.dumps(value, separators=(",", ":")))
