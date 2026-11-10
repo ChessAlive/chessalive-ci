@@ -88,6 +88,12 @@ sync_source_checkout() {
 
   if [[ -d "${SOURCE_DIR}/.git" ]]; then
     say "Updating persistent release checkout"
+    if [[ "$(id -u)" != 0 ]] && command -v sudo >/dev/null 2>&1; then
+      if [[ -n "$(find "${SOURCE_DIR}" -maxdepth 3 -not -user "$(id -un)" -print -quit 2>/dev/null)" ]]; then
+        sudo -n chown -R "$(id -u):$(id -g)" "${SOURCE_DIR}" 2>/dev/null || true
+      fi
+    fi
+    git -C "${SOURCE_DIR}" config core.trustctime false 2>/dev/null || true
     git -C "${SOURCE_DIR}" remote set-url origin "${SOURCE_GIT_URL}" 2>/dev/null || git -C "${SOURCE_DIR}" remote add origin "${SOURCE_GIT_URL}"
     git -C "${SOURCE_DIR}" fetch --quiet --prune --depth=1 origin "${SOURCE_GIT_REF}"
     # A single-branch checkout may only map origin/main. FETCH_HEAD identifies the
