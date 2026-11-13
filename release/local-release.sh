@@ -119,6 +119,8 @@ sync_source_checkout() {
     --exclude apps/player-app/dist/ \
     --exclude '/.cache/squoosh-webp-v1/' \
     --exclude '/.cache/web-compression-v1/' \
+    --exclude '/.cache/tsconfig.player-app.tsbuildinfo' \
+    --exclude '/.cache/eslintcache' \
     --exclude 'apps/go-server/chessd-linux-*' \
     --exclude 'apps/go-server/chessd-migrate-linux-*' \
     "${checkout}/repo/" "${SOURCE_DIR}/"
@@ -210,7 +212,7 @@ run_check_step() {
 if [[ "${PARALLEL_BUILD}" != yes ]]; then
   if [[ "${SKIP_TESTS}" != yes ]]; then
     step_run typecheck npm run typecheck
-    step_run lint npx eslint apps/player-app/src apps/go-server packages --no-error-on-unmatched-pattern
+    step_run lint npx eslint apps/player-app/src apps/go-server packages --no-error-on-unmatched-pattern --cache --cache-location .cache/eslintcache
     if [[ "${SKIP_FULL_TESTS}" == yes ]]; then
       say 'Full Vitest suite skipped (SKIP_FULL_TESTS=yes); typecheck and scoped lint remain enabled'
       progress_mark tests skipped
@@ -256,7 +258,7 @@ else
 
   if [[ "${SKIP_TESTS}" != yes ]]; then
     ( step_run typecheck npm run typecheck ) & typecheck_pid="$!"
-    ( step_run lint npx eslint apps/player-app/src apps/go-server packages --no-error-on-unmatched-pattern ) & lint_pid="$!"
+    ( step_run lint npx eslint apps/player-app/src apps/go-server packages --no-error-on-unmatched-pattern --cache --cache-location .cache/eslintcache ) & lint_pid="$!"
     if [[ "${SKIP_FULL_TESTS}" == yes ]]; then
       say 'Full Vitest suite skipped (SKIP_FULL_TESTS=yes); typecheck and scoped lint remain enabled'
       progress_mark tests skipped
