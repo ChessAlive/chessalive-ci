@@ -193,68 +193,122 @@ else
   progress_mark install skipped
 fi
 
-if [[ "${SKIP_TESTS}" != yes ]]; then
-  step_run typecheck npm run typecheck
-  step_run lint npx eslint apps/player-app/src apps/go-server packages --no-error-on-unmatched-pattern
-  if [[ "${SKIP_FULL_TESTS}" == yes ]]; then
-    say 'Full Vitest suite skipped (SKIP_FULL_TESTS=yes); typecheck and scoped lint remain enabled'
-    progress_mark tests skipped
-  else
-    step_run tests npm run test
-  fi
-  step_run infra npm run test:infra
-  step_run audit npm run check:production-audit
-  step_run narration npm run check:narration-coverage
-else
-  for step in typecheck lint tests infra audit narration; do progress_mark "${step}" skipped; done
-fi
-
 low_mem_host="no"
 total_mem_kb="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 16777216)"
 if (( total_mem_kb < 2097152 )); then
   low_mem_host="yes"
 fi
+PARALLEL_BUILD="${PARALLEL_BUILD:-$([[ "${low_mem_host}" == yes ]] && echo no || echo yes)}"
 
-browser_pid=""
-if [[ "${SKIP_WEB}" != yes && "${SKIP_WEB_SETUP}" != yes ]]; then
-  if [[ "${low_mem_host}" == yes ]]; then
+# Wave 1: run verification checks, browser setup, and Go builds in parallel on multi-core/high-memory hosts.
+run_check_step() {
+  local step="$1"
+  shift
+  step_run "${step}" "$@"
+}
+
+if [[ "${PARALLEL_BUILD}" != yes ]]; then
+  if [[ "${SKIP_TESTS}" != yes ]]; then
+    step_run typecheck npm run typecheck
+    step_run lint npx eslint apps/player-app/src apps/go-server packages --no-error-on-unmatched-pattern
+    if [[ "${SKIP_FULL_TESTS}" == yes ]]; then
+      say 'Full Vitest suite skipped (SKIP_FULL_TESTS=yes); typecheck and scoped lint remain enabled'
+      progress_mark tests skipped
+    else
+      step_run tests npm run test
+    fi
+    step_run infra npm run test:infra
+    step_run audit npm run check:production-audit
+    step_run narration npm run check:narration-coverage
+  else
+    for step in typecheck lint tests infra audit narration; do progress_mark "${step}" skipped; done
+  fi
+
+  if [[ "${SKIP_WEB}" != yes && "${SKIP_WEB_SETUP}" != yes ]]; then
     say 'Installing/verifying browser dependencies sequentially on low-memory host'
     step_run browser npm run setup:web-browser
   else
-    say 'Installing/verifying browser dependencies in parallel with native builds'
-    ( step_run browser npm run setup:web-browser ) &
-    browser_pid="$!"
+    progress_mark browser skipped
   fi
-else
-  progress_mark browser skipped
-fi
 
-say "Building linux/${BUILD_ARCH} server artifacts"
-server_status=0
-migrate_status=0
-build_server_artifacts() {
-  env BUILD_ARCH="${BUILD_ARCH}" npm run build:server:local || return "$?"
-  env BUILD_ARCH="${BUILD_ARCH}" npm run build:gateway:local
-}
-if [[ "${low_mem_host}" == yes ]]; then
+  say "Building linux/${BUILD_ARCH} server artifacts"
+  server_status=0
+  migrate_status=0
+  build_server_artifacts() {
+    env BUILD_ARCH="${BUILD_ARCH}" npm run build:server:local || return "$?"
+    env BUILD_ARCH="${BUILD_ARCH}" npm run build:gateway:local
+  }
   progress_run server build_server_artifacts || server_status="$?"
   progress_run migrate env BUILD_ARCH="${BUILD_ARCH}" npm run build:migrate:local || migrate_status="$?"
+  (( server_status == 0 )) || die 'server build failed'
+  (( migrate_status == 0 )) || die 'migration build failed'
 else
-  ( progress_run server build_server_artifacts ) &
-  server_pid="$!"
-  ( progress_run migrate env BUILD_ARCH="${BUILD_ARCH}" npm run build:migrate:local ) &
-  migrate_pid="$!"
+  say "Running verification checks and linux/${BUILD_ARCH} Go builds in parallel"
+  typecheck_pid=""; typecheck_status=0
+  lint_pid=""; lint_status=0
+  tests_pid=""; tests_status=0
+  infra_pid=""; infra_status=0
+  audit_pid=""; audit_status=0
+  narration_pid=""; narration_status=0
+  browser_pid=""; browser_status=0
+  server_pid=""; server_status=0
+  migrate_pid=""; migrate_status=0
+
+  if [[ "${SKIP_TESTS}" != yes ]]; then
+    ( step_run typecheck npm run typecheck ) & typecheck_pid="$!"
+    ( step_run lint npx eslint apps/player-app/src apps/go-server packages --no-error-on-unmatched-pattern ) & lint_pid="$!"
+    if [[ "${SKIP_FULL_TESTS}" == yes ]]; then
+      say 'Full Vitest suite skipped (SKIP_FULL_TESTS=yes); typecheck and scoped lint remain enabled'
+      progress_mark tests skipped
+    else
+      ( step_run tests npm run test ) & tests_pid="$!"
+    fi
+    ( step_run infra npm run test:infra ) & infra_pid="$!"
+    ( step_run audit npm run check:production-audit ) & audit_pid="$!"
+    ( step_run narration npm run check:narration-coverage ) & narration_pid="$!"
+  else
+    for step in typecheck lint tests infra audit narration; do progress_mark "${step}" skipped; done
+  fi
+
+  if [[ "${SKIP_WEB}" != yes && "${SKIP_WEB_SETUP}" != yes ]]; then
+    ( step_run browser npm run setup:web-browser ) & browser_pid="$!"
+  else
+    progress_mark browser skipped
+  fi
+
+  build_server_artifacts() {
+    local s_pid="" g_pid="" s_rc=0 g_rc=0
+    ( env BUILD_ARCH="${BUILD_ARCH}" npm run build:server:local ) & s_pid="$!"
+    ( env BUILD_ARCH="${BUILD_ARCH}" npm run build:gateway:local ) & g_pid="$!"
+    wait "${s_pid}" || s_rc="$?"
+    wait "${g_pid}" || g_rc="$?"
+    (( s_rc == 0 )) || return "${s_rc}"
+    return "${g_rc}"
+  }
+  ( progress_run server build_server_artifacts ) & server_pid="$!"
+  ( progress_run migrate env BUILD_ARCH="${BUILD_ARCH}" npm run build:migrate:local ) & migrate_pid="$!"
+
+  [[ -z "${typecheck_pid}" ]] || wait "${typecheck_pid}" || typecheck_status="$?"
+  [[ -z "${lint_pid}" ]] || wait "${lint_pid}" || lint_status="$?"
+  [[ -z "${tests_pid}" ]] || wait "${tests_pid}" || tests_status="$?"
+  [[ -z "${infra_pid}" ]] || wait "${infra_pid}" || infra_status="$?"
+  [[ -z "${audit_pid}" ]] || wait "${audit_pid}" || audit_status="$?"
+  [[ -z "${narration_pid}" ]] || wait "${narration_pid}" || narration_status="$?"
+  [[ -z "${browser_pid}" ]] || wait "${browser_pid}" || browser_status="$?"
   wait "${server_pid}" || server_status="$?"
   wait "${migrate_pid}" || migrate_status="$?"
+
+  # Reap every parallel job before exiting, including when one fails.
+  (( typecheck_status == 0 )) || die 'typecheck failed'
+  (( lint_status == 0 )) || die 'lint failed'
+  (( tests_status == 0 )) || die 'tests failed'
+  (( infra_status == 0 )) || die 'infra tests failed'
+  (( audit_status == 0 )) || die 'production audit failed'
+  (( narration_status == 0 )) || die 'narration coverage failed'
+  (( browser_status == 0 )) || die 'browser dependency setup failed'
+  (( server_status == 0 )) || die 'server build failed'
+  (( migrate_status == 0 )) || die 'migration build failed'
 fi
-browser_status=0
-if [[ -n "${browser_pid}" ]]; then
-  wait "${browser_pid}" || browser_status="$?"
-fi
-# Reap every parallel job before exiting, including when one build failed.
-(( server_status == 0 )) || die 'server build failed'
-(( migrate_status == 0 )) || die 'migration build failed'
-(( browser_status == 0 )) || die 'browser dependency setup failed'
 
 if [[ "${SKIP_WEB}" != yes ]]; then
   # The Coach's browser engine is on in the web build (app ADR 2026-10-22); chessd's slot unit turns on its side.
@@ -264,6 +318,15 @@ if [[ "${SKIP_WEB}" != yes ]]; then
     say 'Performance/bundle budgets skipped (SKIP_BUDGETS=yes)'
     progress_mark performance skipped
     progress_mark bundle skipped
+  elif [[ "${PARALLEL_BUILD}" == yes ]]; then
+    perf_pid=""; perf_status=0
+    bundle_pid=""; bundle_status=0
+    ( step_run performance npm run check:performance ) & perf_pid="$!"
+    ( step_run bundle npm run check:bundle ) & bundle_pid="$!"
+    wait "${perf_pid}" || perf_status="$?"
+    wait "${bundle_pid}" || bundle_status="$?"
+    (( perf_status == 0 )) || die 'performance budget failed'
+    (( bundle_status == 0 )) || die 'bundle budget failed'
   else
     step_run performance npm run check:performance
     step_run bundle npm run check:bundle

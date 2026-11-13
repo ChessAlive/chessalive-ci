@@ -52,7 +52,7 @@ test('release emits every executed/skipped step and preserves independent parall
 });
 
 test('sequential command failure is explicit and retains its exit status', t => {
-  const result = fixture(t).run({ FAIL_COMMAND: 'run typecheck' });
+  const result = fixture(t).run({ PARALLEL_BUILD: 'no', FAIL_COMMAND: 'run typecheck' });
   assert.equal(result.status, 37);
   assert.deepEqual(events(result).filter(event => event.id === 'typecheck'), [marker('typecheck', 'running'), marker('typecheck', 'failed')]);
   assert.ok(!events(result).some(event => event.id === 'lint'));
