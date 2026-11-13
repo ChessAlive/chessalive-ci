@@ -209,13 +209,26 @@ remote "mkdir -p '${STAGE}'"
 # the "already there" decision. No -a: owner/group/mode on the box are decided by install(1).
 sync_to_host "${CONTENT_UPLOADS}/" "${STAGE}/"
 
+ASSETS_CDN_ORIGIN="${ASSETS_CDN_ORIGIN:-https://objectstorage.ap-mumbai-1.oraclecloud.com/n/bmt2adcjgo0u/b/chessalive-assets/o}"
 say "Installing files into ${UPLOAD_DIR}${DRY_RUN:+ (dry run: reporting only)}"
 INSTALL_LOG="${WORK}/install.log"
-remote "STAGE='${STAGE}' UPLOAD_DIR='${UPLOAD_DIR}' DRY_RUN='${DRY_RUN}' bash -s" <<'REMOTE_SCRIPT' | tee "${INSTALL_LOG}"
+remote "STAGE='${STAGE}' UPLOAD_DIR='${UPLOAD_DIR}' DRY_RUN='${DRY_RUN}' ASSETS_CDN_ORIGIN='${ASSETS_CDN_ORIGIN}' bash -s" <<'REMOTE_SCRIPT' | tee "${INSTALL_LOG}"
 set -euo pipefail
 cd "${STAGE}"
-# The transfer itself is proven against the committed manifest before anything is installed.
-sha256sum -c --quiet SHA256SUMS || { echo "✖ staged files do not match SHA256SUMS — transfer corrupt" >&2; exit 1; }
+# Verify any locally staged files against SHA256SUMS before installing.
+# Entries absent from content/uploads/ are OCI-hosted (see scripts/content/verify.mjs).
+staged_manifest="$(mktemp)"
+trap 'rm -f "${staged_manifest}"' EXIT
+while IFS= read -r line; do
+  [[ -z "${line}" ]] && continue
+  name="${line#*  }"
+  if [[ -f "${STAGE}/${name}" ]]; then
+    printf '%s\n' "${line}" >> "${staged_manifest}"
+  fi
+done < SHA256SUMS
+if [[ -s "${staged_manifest}" ]]; then
+  sha256sum -c --quiet "${staged_manifest}" || { echo "✖ staged files do not match SHA256SUMS — transfer corrupt" >&2; exit 1; }
+fi
 install=0; skip=0; conflict=0
 while IFS= read -r line; do
   [[ -z "${line}" ]] && continue
@@ -230,12 +243,37 @@ while IFS= read -r line; do
       conflict=$((conflict + 1))
     fi
   elif [[ -n "${DRY_RUN}" ]]; then
-    echo "would install  ${name}"; install=$((install + 1))
+    if [[ -f "${STAGE}/${name}" ]]; then
+      echo "would install  ${name}"
+    else
+      echo "would fetch    ${name}  (from OCI)"
+    fi
+    install=$((install + 1))
   else
-    sudo -n install -D -o chessalive -g chessalive -m 0644 "${STAGE}/${name}" "${dst}"
+    src="${STAGE}/${name}"
+    source_label="sha256 verified"
+    if [[ ! -f "${src}" ]]; then
+      tmp_oci="$(mktemp)"
+      oci_url="${ASSETS_CDN_ORIGIN%/}/uploads/${name}"
+      if ! curl -fsSL --max-time 60 "${oci_url}" -o "${tmp_oci}"; then
+        rm -f "${tmp_oci}"
+        echo "✖ ${name}: not staged locally and failed to fetch from ${oci_url}" >&2
+        exit 1
+      fi
+      got_oci="$(sha256sum "${tmp_oci}" | cut -d' ' -f1)"
+      if [[ "${got_oci}" != "${want}" ]]; then
+        rm -f "${tmp_oci}"
+        echo "✖ ${name}: OCI object sha256 mismatch (got ${got_oci:0:12}…, want ${want:0:12}…)" >&2
+        exit 1
+      fi
+      src="${tmp_oci}"
+      source_label="fetched from OCI, sha256 verified"
+    fi
+    sudo -n install -D -o chessalive -g chessalive -m 0644 "${src}" "${dst}"
+    [[ "${src}" != "${STAGE}/${name}" ]] && rm -f "${src}"
     got="$(sudo -n sha256sum "${dst}" | cut -d' ' -f1)"
     [[ "${got}" == "${want}" ]] || { echo "✖ ${name}: sha256 mismatch after install" >&2; exit 1; }
-    echo "installed      ${name}  (sha256 verified)"; install=$((install + 1))
+    echo "installed      ${name}  (${source_label})"; install=$((install + 1))
   fi
 done < SHA256SUMS
 echo "files: ${install} ${DRY_RUN:+would-}install, ${skip} identical, ${conflict} conflict"
