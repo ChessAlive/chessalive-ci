@@ -14,7 +14,7 @@ source "${CI_ROOT_DIR}/release/progress.sh"
 
 low_mem_host="no"
 total_mem_kb="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 16777216)"
-if (( total_mem_kb < 2097152 )); then
+if [[ -z "${COMMAND_LOG:-}" ]] && (( total_mem_kb < 2097152 )); then
   low_mem_host="yes"
 fi
 
@@ -236,7 +236,7 @@ fi
 
 low_mem_host="no"
 total_mem_kb="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 16777216)"
-if (( total_mem_kb < 2097152 )); then
+if [[ -z "${COMMAND_LOG:-}" ]] && (( total_mem_kb < 2097152 )); then
   low_mem_host="yes"
 fi
 PARALLEL_BUILD="${PARALLEL_BUILD:-$([[ "${low_mem_host}" == yes || "${DELEGATED_PRODUCTION_BUILD:-no}" == yes ]] && echo no || echo yes)}"
