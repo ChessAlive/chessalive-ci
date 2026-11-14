@@ -145,3 +145,20 @@ exit "\${FAIL_PUBLISH:-0}"
   assert.deepEqual(events(failed).filter(event => event.id === 'content'), [marker('content', 'running'), marker('content', 'failed')]);
   assert.ok(!events(failed).some(event => event.id === 'content_readiness'));
 });
+
+test('delegated production build forces sequential execution and single-worker caps', t => {
+  const f = fixture(t);
+  writeFileSync(path.join(f.bin, 'npm'), `#!/bin/sh
+printf 'npm %s workers=%s gomaxprocs=%s\\n' "$*" "\${CHESSALIVE_BUILD_MAX_WORKERS:-unset}" "\${GOMAXPROCS:-unset}" >> "$COMMAND_LOG"
+case "$*" in
+  'run build:server:local') sleep 0.05 ;;
+esac
+exit 0
+`, { mode: 0o755 });
+  const result = f.run({ DELEGATED_PRODUCTION_BUILD: 'yes', DELEGATED_DISABLE_SYSTEMD_SCOPE: 'yes' });
+  assert.equal(result.status, 0, result.stderr);
+  const observed = events(result);
+  assert.ok(observed.findIndex(event => event.id === 'server' && event.status === 'done') < observed.findIndex(event => event.id === 'migrate' && event.status === 'running'), 'server finishes before migrate starts in sequential mode');
+  const log = readFileSync(f.commandLog, 'utf8');
+  assert.ok(log.includes('npm run build:web workers=1 gomaxprocs=1'), log);
+});

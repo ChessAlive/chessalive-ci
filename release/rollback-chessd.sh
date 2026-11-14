@@ -20,7 +20,8 @@ HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8080/health}"
 HEALTH_RETRIES="${HEALTH_RETRIES:-30}"
 HEALTH_INTERVAL="${HEALTH_INTERVAL:-1}"
 [[ "${OCI_USER}" =~ ^[a-zA-Z0-9_.-]+$ && "${OCI_HOST}" =~ ^[a-zA-Z0-9_.:-]+$ ]] || exit 64
-SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new)
+CONTROL_PATH="${BUILD_SSH_CONTROL_PATH:-${TMPDIR:-/tmp}/chessalive-ci-ssh-%C}"
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -o ControlMaster=auto -o "ControlPath=${CONTROL_PATH}" -o ControlPersist=300)
 [[ -z "${SSH_KEY}" ]] || SSH_OPTS+=(-i "${SSH_KEY}")
 remote() {
   if [[ "${LOCAL_DEPLOY}" == yes ]]; then bash -c "$1";

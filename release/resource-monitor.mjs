@@ -1,6 +1,10 @@
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+const defaultControlPath = join(tmpdir(), 'chessalive-ci-ssh-%C');
 
 const collectorPath = fileURLToPath(new URL('./resource-snapshot.py', import.meta.url));
 const collector = readFileSync(collectorPath, 'utf8');
@@ -55,10 +59,11 @@ export function createResourceMonitor({ enabled = true, remoteHost, remoteUser =
   ];
   const providerIntervalMs = Math.max(60000, Math.min(3600000, Number(cloudIntervalMs) || 300000));
   const providerHosts = hosts.map(({ id, label }) => ({ id, label, status: 'loading', checkedAt: null, error: null, snapshot: null }));
+  const sshControlPath = process.env.BUILD_SSH_CONTROL_PATH || defaultControlPath;
   function remoteArgs(command) {
     if (!remoteHost) throw new Error('Production host is not configured');
     if (!/^[a-zA-Z0-9.:-]+$/.test(remoteHost) || !/^[a-zA-Z0-9_-]+$/.test(remoteUser)) throw new Error('Invalid production monitoring host configuration');
-    const args = ['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', '-o', 'StrictHostKeyChecking=yes'];
+    const args = ['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', '-o', 'StrictHostKeyChecking=yes', '-o', 'ControlMaster=auto', '-o', `ControlPath=${sshControlPath}`, '-o', 'ControlPersist=300'];
     if (remoteKey) args.push('-i', remoteKey, '-o', 'IdentitiesOnly=yes');
     return [...args, `${remoteUser}@${remoteHost}`, command];
   }

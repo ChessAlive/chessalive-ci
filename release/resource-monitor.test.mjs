@@ -142,6 +142,8 @@ test('monitor keeps stale last-known data explicit after failure, then recovers 
   const ssh = (await fixture.calls()).find(call => call.kind === 'ssh');
   assert.ok(ssh.args.includes('StrictHostKeyChecking=yes'));
   assert.ok(ssh.args.includes('BatchMode=yes'));
+  assert.ok(ssh.args.includes('ControlMaster=auto'));
+  assert.ok(ssh.args.includes('ControlPersist=300'));
   assert.ok(ssh.args.includes('/fake key'));
   assert.deepEqual(ssh.args.slice(-2), ['ubuntu@127.0.0.2', 'python3 -']);
 });

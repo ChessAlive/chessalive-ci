@@ -20,11 +20,20 @@ fi
 
 # When running on an Always Free E2.1.Micro (1 GB RAM) control plane with a remote 12 GB ARM64 host
 # configured, delegate heavy compilation and bundle steps over SSH to the remote host so the build
-# finishes in minutes without exhausting control-plane memory.
+# finishes without exhausting control-plane memory while capping CPU/IO impact on live production.
 if [[ "${low_mem_host}" == yes && "${DEPLOY_REMOTE:-no}" == yes && -n "${DEPLOY_HOST:-}" && -n "${DEPLOY_SSH_KEY:-}" && -r "${DEPLOY_SSH_KEY:-}" && "${DELEGATE_LOW_MEM_BUILD:-yes}" == yes ]]; then
-  echo "Delegating build execution to high-memory host ${DEPLOY_USER:-ubuntu}@${DEPLOY_HOST}"
-  ssh -i "${DEPLOY_SSH_KEY}" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-    "${DEPLOY_USER:-ubuntu}@${DEPLOY_HOST}" \
+  echo "Delegating throttled build execution to host ${DEPLOY_USER:-ubuntu}@${DEPLOY_HOST}"
+  delegated_control_path="${BUILD_SSH_CONTROL_PATH:-${TMPDIR:-/tmp}/chessalive-ci-ssh-%C}"
+  delegated_ssh_opts=(
+    -i "${DEPLOY_SSH_KEY}"
+    -o IdentitiesOnly=yes
+    -o BatchMode=yes
+    -o StrictHostKeyChecking=accept-new
+    -o ControlMaster=auto
+    -o "ControlPath=${delegated_control_path}"
+    -o ControlPersist=300
+  )
+  ssh "${delegated_ssh_opts[@]}" "${DEPLOY_USER:-ubuntu}@${DEPLOY_HOST}" \
     "while IFS='=' read -r k v; do
        [[ -n \"\${k}\" && \"\${k}\" != \\#* ]] || continue
        v=\"\${v%\\\"}\"; v=\"\${v#\\\"}\"
@@ -47,18 +56,48 @@ if [[ "${low_mem_host}" == yes && "${DEPLOY_REMOTE:-no}" == yes && -n "${DEPLOY_
             DEPLOY_REMOTE='no' \
             LOCAL_DEPLOY='yes' \
             PUBLIC_URL='${PUBLIC_URL:-https://chessalive.com}' \
-            DELEGATE_LOW_MEM_BUILD='no'; \
+            DELEGATE_LOW_MEM_BUILD='no' \
+            DELEGATED_PRODUCTION_BUILD='yes' \
+            PARALLEL_BUILD='${PARALLEL_BUILD:-no}' \
+            CHESSALIVE_BUILD_MAX_WORKERS='${CHESSALIVE_BUILD_MAX_WORKERS:-1}' \
+            DELEGATED_CPU_QUOTA='${DELEGATED_CPU_QUOTA:-120%}' \
+            DELEGATED_CPU_WEIGHT='${DELEGATED_CPU_WEIGHT:-10}' \
+            DELEGATED_IO_WEIGHT='${DELEGATED_IO_WEIGHT:-10}'; \
      bash /opt/chessalive-ci/release/local-release.sh"
   rc="$?"
   if (( rc == 0 )) && [[ -n "${SOURCE_DIR:-}" ]]; then
-    ssh -i "${DEPLOY_SSH_KEY}" -o IdentitiesOnly=yes -o BatchMode=yes "${DEPLOY_USER:-ubuntu}@${DEPLOY_HOST}" \
+    ssh "${delegated_ssh_opts[@]}" "${DEPLOY_USER:-ubuntu}@${DEPLOY_HOST}" \
       "cat /opt/chessalive/repo/.source-commit 2>/dev/null" > "${SOURCE_DIR}/.source-commit" 2>/dev/null || true
-    ssh -i "${DEPLOY_SSH_KEY}" -o IdentitiesOnly=yes -o BatchMode=yes "${DEPLOY_USER:-ubuntu}@${DEPLOY_HOST}" \
+    ssh "${delegated_ssh_opts[@]}" "${DEPLOY_USER:-ubuntu}@${DEPLOY_HOST}" \
       "cat /opt/chessalive/repo/.source-commit-message 2>/dev/null" > "${SOURCE_DIR}/.source-commit-message" 2>/dev/null || true
-    ssh -i "${DEPLOY_SSH_KEY}" -o IdentitiesOnly=yes -o BatchMode=yes "${DEPLOY_USER:-ubuntu}@${DEPLOY_HOST}" \
+    ssh "${delegated_ssh_opts[@]}" "${DEPLOY_USER:-ubuntu}@${DEPLOY_HOST}" \
       "cat /opt/chessalive/repo/.source-commit-date 2>/dev/null" > "${SOURCE_DIR}/.source-commit-date" 2>/dev/null || true
   fi
   exit "${rc}"
+fi
+
+# When running as a delegated build guest on the live production VM, place the build inside a
+# low-weight cgroup CPU/IO scope and single-worker concurrency so live games keep Dedicated CPU headroom.
+if [[ "${DELEGATED_PRODUCTION_BUILD:-no}" == yes && "${DELEGATED_SCOPE_ACTIVE:-no}" != yes ]]; then
+  export DELEGATED_SCOPE_ACTIVE=yes
+  export PARALLEL_BUILD="${PARALLEL_BUILD:-no}"
+  export CHESSALIVE_BUILD_MAX_WORKERS="${CHESSALIVE_BUILD_MAX_WORKERS:-1}"
+  export GOMAXPROCS="${GOMAXPROCS:-1}"
+  export UV_THREADPOOL_SIZE="${UV_THREADPOOL_SIZE:-2}"
+  export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+  export RAYON_NUM_THREADS="${RAYON_NUM_THREADS:-1}"
+  if [[ "${DELEGATED_DISABLE_SYSTEMD_SCOPE:-no}" != yes ]] && command -v systemd-run >/dev/null 2>&1 && command -v sudo >/dev/null 2>&1 && sudo -n -E true 2>/dev/null; then
+    prio_cmd=()
+    command -v nice >/dev/null 2>&1 && prio_cmd+=(nice -n 19)
+    command -v ionice >/dev/null 2>&1 && prio_cmd+=(ionice -c 3)
+    exec sudo -n -E systemd-run --quiet --scope --uid="$(id -u)" --gid="$(id -g)" \
+      -p "CPUWeight=${DELEGATED_CPU_WEIGHT:-10}" \
+      -p "IOWeight=${DELEGATED_IO_WEIGHT:-10}" \
+      -p "CPUQuota=${DELEGATED_CPU_QUOTA:-120%}" -- \
+      "${prio_cmd[@]}" bash "${BASH_SOURCE[0]}" "$@"
+  elif command -v nice >/dev/null 2>&1; then
+    exec nice -n 19 bash "${BASH_SOURCE[0]}" "$@"
+  fi
 fi
 
 trap 'progress_on_exit "$?"' EXIT
@@ -200,7 +239,7 @@ total_mem_kb="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 
 if (( total_mem_kb < 2097152 )); then
   low_mem_host="yes"
 fi
-PARALLEL_BUILD="${PARALLEL_BUILD:-$([[ "${low_mem_host}" == yes ]] && echo no || echo yes)}"
+PARALLEL_BUILD="${PARALLEL_BUILD:-$([[ "${low_mem_host}" == yes || "${DELEGATED_PRODUCTION_BUILD:-no}" == yes ]] && echo no || echo yes)}"
 
 # Wave 1: run verification checks, browser setup, and Go builds in parallel on multi-core/high-memory hosts.
 run_check_step() {
