@@ -3,7 +3,14 @@
 set -euo pipefail
 MODE="${MODE:-deploy}"
 TOOLS=/opt/chessalive-release-tools
-case "${MODE}" in deploy|rollback|status|recover) ;; *) exit 64 ;; esac
+case "${MODE}" in deploy|preprod|promote|rollback|status|recover) ;; *) exit 64 ;; esac
+if [[ "${MODE}" == preprod ]]; then
+  [[ "${STAGE:-}" =~ ^/tmp/chessd-deploy-[a-zA-Z0-9._-]+$ ]] || exit 64
+  install -d -m 0755 "${TOOLS}"
+  for name in runtime_transaction.py release_store.py handoff.py; do
+    install -m 0644 "${STAGE}/${name}" "${TOOLS}/${name}"
+  done
+fi
 if [[ "${MODE}" == deploy ]]; then
   [[ "${STAGE:-}" =~ ^/tmp/chessd-deploy-[a-zA-Z0-9._-]+$ ]] || exit 64
   install -d -m 0755 "${TOOLS}"
@@ -71,7 +78,7 @@ if [[ "${MODE}" == status ]]; then
   exec python3 "${TOOLS}/runtime_transaction.py" status
 fi
 args=("${MODE}")
-[[ "${MODE}" != deploy ]] || args+=(--stage "${STAGE}")
+[[ "${MODE}" != deploy && "${MODE}" != preprod ]] || args+=(--stage "${STAGE}")
 exec systemd-run --quiet --wait --pipe --collect --unit=chessalive-release-operation \
   --property=TimeoutStartSec=infinity \
   --setenv="CHESSALIVE_PROGRESS=${CHESSALIVE_PROGRESS:-}" \

@@ -45,6 +45,7 @@ HEALTH_RETRIES="${HEALTH_RETRIES:-30}"
 HEALTH_INTERVAL="${HEALTH_INTERVAL:-1}"
 SKIP_BUILD="${SKIP_BUILD:-}"
 SKIP_WEB="${SKIP_WEB:-}"
+DEPLOY_TARGET="${DEPLOY_TARGET:-prod}"
 TARGET_ARCH="${TARGET_ARCH:-$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')}"
 
 BINARY_SRC="${SOURCE_ROOT}/apps/go-server/chessd-linux-${TARGET_ARCH}"
@@ -131,6 +132,9 @@ done
 for name in chessgate.service chessalive-runtime.conf; do
   copy_to_host "${CI_ROOT}/production/${name}" "${STAGE}/${name}"
 done
+if [[ -f "${CI_ROOT}/production/chessd-preprod.service" ]]; then
+  copy_to_host "${CI_ROOT}/production/chessd-preprod.service" "${STAGE}/chessd-preprod.service"
+fi
 
 # Tie the installed release to its source, independent of later checkout updates or rollback.
 RELEASE_METADATA="$(mktemp "${TMPDIR:-/tmp}/chessalive-release-metadata.XXXXXX")"
@@ -186,18 +190,33 @@ if [[ "${SKIP_WEB}" != "yes" ]]; then
 fi
 
 # ── Install + health gate ────────────────────────────────────────────────────────────────────────
-say "Handing traffic and game state to the verified release"
 install_started="${SECONDS}"
 DEPLOY_PROGRESS_LOG="$(mktemp "${TMPDIR:-/tmp}/chessalive-deploy-progress.XXXXXX")"
-# Pass values as shell-quoted arguments rather than interpolating an SSH command.
-printf -v remote_command 'sudo -n env MODE=deploy STAGE=%q REMOTE_ROOT=%q SERVICE=%q HEALTH_URL=%q HEALTH_RETRIES=%q HEALTH_INTERVAL=%q SKIP_WEB=%q CHESSALIVE_PROGRESS=%q bash -s' \
-  "${STAGE}" "${REMOTE_ROOT}" "${SERVICE}" "${HEALTH_URL}" "${HEALTH_RETRIES}" "${HEALTH_INTERVAL}" "${SKIP_WEB}" "${CHESSALIVE_PROGRESS:-}"
+if [[ "${DEPLOY_TARGET}" == "preprod" ]]; then
+  say "Deploying isolated release to Pre-Prod (production untouched)"
+  printf -v remote_command 'sudo -n env MODE=preprod STAGE=%q REMOTE_ROOT=%q SERVICE=%q HEALTH_URL=%q HEALTH_RETRIES=%q HEALTH_INTERVAL=%q SKIP_WEB=%q CHESSALIVE_PROGRESS=%q bash -s' \
+    "${STAGE}" "${REMOTE_ROOT}" "${SERVICE}" "${HEALTH_URL}" "${HEALTH_RETRIES}" "${HEALTH_INTERVAL}" "${SKIP_WEB}" "${CHESSALIVE_PROGRESS:-}"
+else
+  say "Handing traffic and game state to the verified release"
+  # Pass values as shell-quoted arguments rather than interpolating an SSH command.
+  printf -v remote_command 'sudo -n env MODE=deploy STAGE=%q REMOTE_ROOT=%q SERVICE=%q HEALTH_URL=%q HEALTH_RETRIES=%q HEALTH_INTERVAL=%q SKIP_WEB=%q CHESSALIVE_PROGRESS=%q bash -s' \
+    "${STAGE}" "${REMOTE_ROOT}" "${SERVICE}" "${HEALTH_URL}" "${HEALTH_RETRIES}" "${HEALTH_INTERVAL}" "${SKIP_WEB}" "${CHESSALIVE_PROGRESS:-}"
+fi
 remote "${remote_command}" < "${CI_ROOT}/release/runtime-transaction.sh" | tee "${DEPLOY_PROGRESS_LOG}"
 echo "[deploy-timing] install and health transaction: $(( SECONDS - install_started ))s"
 
 progress_adopt_log "${DEPLOY_PROGRESS_LOG}"
 rm -f "${DEPLOY_PROGRESS_LOG}"
 DEPLOY_PROGRESS_LOG=""
+
+if [[ "${DEPLOY_TARGET}" == "preprod" ]]; then
+  say "Deployed to Pre-Prod (production untouched)"
+  remote "systemctl is-active chessd-preprod"
+  remote "curl -fsS --max-time 10 http://127.0.0.1:8083/version 2>/dev/null || true"
+  echo
+  echo "${PREPROD_URL:-https://preprod.129-225-116-198.sslip.io}"
+  exit 0
+fi
 
 # ── Multi-pod / OKE Autoscaler Rollout ───────────────────────────────────────────────────────────
 if [[ -n "${DEPLOY_POD_HOSTS:-}" ]]; then

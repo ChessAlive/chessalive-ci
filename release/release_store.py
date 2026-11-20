@@ -71,8 +71,101 @@ def public_info(value):
     return result
 
 
+
+_SHELL_VERSION_RE = re.compile(r'__caShellVersion\s*=\s*["\']([^"\']+)["\']')
+_ENTRY_SCRIPT_RE = re.compile(r'/_expo/static/js/web/[^"\'?\s\\]+\.js(?:\?v=([^"\'\s\\]+))?')
+
+
+def _parse_shell_html(html):
+    if "data-ca-resumable-loader" not in html and "/_expo/static/js/web/" not in html:
+        return None
+    version_match = _SHELL_VERSION_RE.search(html)
+    version = version_match.group(1) if version_match else ""
+    scripts = []
+    seen = set()
+    for match in _ENTRY_SCRIPT_RE.finditer(html):
+        full = match.group(0)
+        script_path = full.split("?", 1)[0]
+        query_version = match.group(1) or ""
+        if query_version and version and query_version != version:
+            raise ValueError(f"Route shell script {full} version mismatch with {version}")
+        if script_path not in seen:
+            seen.add(script_path)
+            scripts.append(script_path)
+    if not scripts:
+        raise ValueError("Route shell is missing entry scripts")
+    return {"version": version, "scripts": scripts}
+
+
+def _is_core_entry_script(script_path):
+    clean = script_path.split("?", 1)[0]
+    return (
+        "/__expo-metro-runtime-" in clean
+        or "/__common-" in clean
+        or "/index-" in clean
+    )
+
+
+def _core_entry_scripts(scripts):
+    core = [s for s in scripts if _is_core_entry_script(s)]
+    return core or list(scripts)
+
+
+def verify_route_shells(web_root):
+    web_root = Path(web_root)
+    index_path = web_root / "index.html"
+    if not index_path.is_file():
+        return
+    index_info = _parse_shell_html(index_path.read_text(encoding="utf-8", errors="replace"))
+    if index_info is None:
+        return
+    if "data-ca-resumable-loader" not in index_path.read_text(encoding="utf-8", errors="replace"):
+        raise ValueError("index.html is missing data-ca-resumable-loader")
+    expected_version = str(read_json(web_root / "version.json").get("version") or "")
+    if expected_version and index_info["version"] and index_info["version"] != expected_version:
+        raise ValueError("index.html shell version does not match version.json")
+    for script_path in index_info["scripts"]:
+        if not (web_root / script_path.lstrip("/")).is_file():
+            raise ValueError(f"Missing entry script {script_path} referenced by index.html")
+    shells_dir = web_root / ".route-shells"
+    routes_file = shells_dir / "routes.json"
+    if not routes_file.is_file():
+        raise ValueError("Release is missing web/.route-shells/routes.json")
+    routes_meta = read_json(routes_file)
+    routes = routes_meta.get("routes")
+    if not isinstance(routes, list) or not routes:
+        raise ValueError("Release web/.route-shells/routes.json has no routes list")
+    shell_files = {p.name for p in shells_dir.glob("*.html") if p.is_file()}
+    for route in routes:
+        if not isinstance(route, str):
+            continue
+        slug = "home" if route == "/" else re.sub(r"[^a-zA-Z0-9-]+", "-", route.strip("/"))
+        filename = f"{slug}.html"
+        if filename not in shell_files:
+            raise ValueError(f"Missing route shell {filename} for {route}")
+    web_root_resolved = web_root.resolve()
+    index_core_scripts = _core_entry_scripts(index_info["scripts"])
+    for filename in sorted(shell_files):
+        shell_path = shells_dir / filename
+        shell_html = shell_path.read_text(encoding="utf-8", errors="replace")
+        if "data-ca-resumable-loader" not in shell_html:
+            raise ValueError(f"Route shell {filename} is missing resumable loader")
+        shell_info = _parse_shell_html(shell_html)
+        if shell_info is None:
+            raise ValueError(f"Route shell {filename} is missing entry scripts")
+        if shell_info["version"] != index_info["version"]:
+            raise ValueError(f"Route shell {filename} version {shell_info['version']} does not match index.html {index_info['version']}")
+        for script_path in shell_info["scripts"]:
+            candidate = (web_root / script_path.lstrip("/")).resolve()
+            if not candidate.is_relative_to(web_root_resolved) or not candidate.is_file():
+                raise ValueError(f"Missing script {script_path} referenced by route shell {filename}")
+        if _core_entry_scripts(shell_info["scripts"]) != index_core_scripts:
+            raise ValueError(f"Route shell {filename} entry scripts do not match index.html")
+
+
 def manifest(root, metadata):
     root = Path(root)
+    verify_route_shells(root / "web")
     value = dict(public_info(metadata), schemaVersion=1, complete=True, files=inventory(root))
     value["version"] = str(read_json(root / "web/version.json").get("version") or "")
     required = ("chessd", "chessd-migrate", "chessd.service", "web/index.html", "packages/data/puzzles.json")
@@ -89,6 +182,7 @@ def verify(root):
         raise ValueError("Release has no complete manifest")
     if inventory(root) != value.get("files"):
         raise ValueError("Release checksum verification failed")
+    verify_route_shells(root / "web")
     return value
 
 

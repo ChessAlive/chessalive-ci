@@ -1,0 +1,20 @@
+[Unit]
+Description=ChessAlive Pre-Prod Admin Gate (127.0.0.1:8084 -> 127.0.0.1:8083)
+After=network-online.target chessd-preprod.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+EnvironmentFile=/etc/chessalive.env
+EnvironmentFile=-/etc/chessalive/preprod-gate.env
+ExecStart=/usr/bin/node /etc/chessalive-subdomains/preprod-gate.mjs
+Restart=always
+RestartSec=2
+MemoryMax=256M
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

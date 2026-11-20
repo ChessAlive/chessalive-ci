@@ -17,7 +17,7 @@ import urllib.request
 import urllib.error
 
 from handoff import Handoff
-from release_store import archive_client, atomic_bytes, atomic_json, extract, manifest, public_info, read_json, verify
+from release_store import archive_client, atomic_bytes, atomic_json, extract, manifest, public_info, read_json, verify, verify_route_shells
 
 ROOT = Path("/opt/chessalive")
 RUN = Path("/run/chessalive")
@@ -108,6 +108,9 @@ class Platform:
         # Liveness alone does not exercise the production database connection.
         if not http_json(self.upstream(release) + "/version").get("version"):
             raise RuntimeError("Candidate did not pass its database-backed version check")
+        web_dir = self.release_dir(release) / "web"
+        if web_dir.is_dir():
+            verify_route_shells(web_dir)
 
     def upstream(self, release):
         return "http://127.0.0.1:" + str(release["port"])
@@ -232,7 +235,11 @@ class Platform:
                     link_path.symlink_to(target_page)
 
     def complete(self, current, candidate):
-        atomic_json(self.state_file, {"schemaVersion": 1, "current": candidate, "previous": current})
+        state = read_json(self.state_file)
+        payload = {"schemaVersion": 1, "current": candidate, "previous": current}
+        if isinstance(state.get("preprod"), dict):
+            payload["preprod"] = state["preprod"]
+        atomic_json(self.state_file, payload)
         self.compatibility_links(candidate)
         self.recovery_file.unlink(missing_ok=True)
         self.journal.unlink(missing_ok=True)
@@ -244,7 +251,7 @@ class Platform:
 
     def prune(self):
         state = read_json(self.state_file)
-        keep = {state.get(key, {}).get("id") for key in ("current", "previous")}
+        keep = {state.get(key, {}).get("id") for key in ("current", "previous", "preprod") if isinstance(state.get(key), dict)}
         for path in self.releases.iterdir():
             if path.is_dir() and not path.is_symlink() and path.name not in keep and re.fullmatch(r"(?:release|legacy)-[a-z0-9-]+", path.name):
                 if read_json(path / "manifest.json").get("complete") is True:
@@ -254,6 +261,55 @@ class Platform:
             for path in objects.iterdir():
                 if path.is_file() and not path.is_symlink() and re.fullmatch(r"[a-f0-9]{64}", path.name) and path.stat().st_nlink == 1:
                     path.unlink()
+
+    def activate_preprod(self, release, stage=None):
+        """Activate a verified release on the isolated pre-prod service without touching production."""
+        if release.get("slot") != "preprod":
+            raise ValueError("Pre-prod activation requires slot=preprod")
+        directory = self.release_dir(release)
+        slots = self.root / "slots"
+        slots.mkdir(exist_ok=True)
+        previous_target = None
+        slot_link = slots / "preprod"
+        if slot_link.is_symlink():
+            try:
+                previous_target = slot_link.resolve()
+            except OSError:
+                previous_target = None
+        tmp_link = slots / "preprod.new"
+        tmp_link.unlink(missing_ok=True)
+        tmp_link.symlink_to(directory)
+        os.replace(tmp_link, slot_link)
+        if self.root == ROOT:
+            if stage is not None and (Path(stage) / "chessd-preprod.service").is_file():
+                shutil.copyfile(Path(stage) / "chessd-preprod.service", "/etc/systemd/system/chessd-preprod.service")
+                command("systemctl", "daemon-reload")
+            try:
+                command("systemctl", "enable", "chessd-preprod")
+                command("systemctl", "restart", "chessd-preprod")
+                deadline = time.monotonic() + 60
+                last_err = None
+                while time.monotonic() < deadline:
+                    try:
+                        self.health(release)
+                        last_err = None
+                        break
+                    except Exception as exc:
+                        last_err = exc
+                        time.sleep(0.5)
+                if last_err is not None:
+                    raise RuntimeError(f"Pre-prod health gate failed: {last_err}")
+            except Exception:
+                if previous_target and previous_target.is_dir():
+                    restore_link = slots / "preprod.new"
+                    restore_link.unlink(missing_ok=True)
+                    restore_link.symlink_to(previous_target)
+                    os.replace(restore_link, slot_link)
+                    subprocess.run(["systemctl", "restart", "chessd-preprod"], check=False)
+                raise
+        state = read_json(self.state_file)
+        payload = {"schemaVersion": 1, "current": state.get("current"), "previous": state.get("previous"), "preprod": release}
+        atomic_json(self.state_file, payload)
 
     def sync_autoscaled_pods(self, release, mode="deploy"):
         """When OKE / Kubernetes is configured on the host, automatically roll out the verified release
@@ -568,6 +624,99 @@ class Platform:
             "pods": pods,
         }
 
+    def preprod_summary(self, state, busy=False, pending=False):
+        preprod = state.get("preprod") if isinstance(state.get("preprod"), dict) else None
+        current = state.get("current") if isinstance(state.get("current"), dict) else None
+        live_host = self.root == ROOT and RUN.exists()
+        if not preprod:
+            link = self.root / "slots" / "preprod"
+            try:
+                target = link.resolve()
+                if target.parent == self.releases and re.fullmatch(r"(?:release|legacy)-[a-z0-9-]+", target.name):
+                    preprod = {"id": target.name, "slot": "preprod", "port": 8083, "protocol": 1}
+            except OSError:
+                preprod = None
+        rel_id = preprod.get("id") if isinstance(preprod, dict) else None
+        manifest_data = read_json(self.release_dir(preprod) / "manifest.json") if rel_id else {}
+        complete = manifest_data.get("complete") is True
+        build = public_info(manifest_data) if rel_id else {"commitHash": None, "commitMessage": None, "commitDate": None, "version": None}
+        in_sync = bool(rel_id and current and rel_id == current.get("id"))
+        sys_active = None
+        cgroup_mem = None
+        cgroup_peak = None
+        cgroup_cpu = None
+        healthy = False
+        metrics = {}
+        if live_host:
+            try:
+                out = subprocess.run(["systemctl", "show", "chessd-preprod",
+                                      "--property=ActiveState,MemoryCurrent,MemoryPeak,CPUUsageNSec"],
+                                     capture_output=True, text=True, timeout=1.5, check=True).stdout
+                vals = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+                sys_active = vals.get("ActiveState")
+                def _num(val):
+                    return int(val) if isinstance(val, str) and val.isdigit() and int(val) < 2**63 else None
+                cgroup_mem = _num(vals.get("MemoryCurrent", ""))
+                cgroup_peak = _num(vals.get("MemoryPeak", ""))
+                cgroup_cpu = _num(vals.get("CPUUsageNSec", ""))
+            except (OSError, subprocess.SubprocessError):
+                sys_active = None
+            if sys_active == "active":
+                try:
+                    healthy = bool(http_json("http://127.0.0.1:8083/health").get("ok"))
+                except Exception:
+                    healthy = False
+                token = None
+                if Path("/etc/chessalive.env").is_file():
+                    try:
+                        for line in Path("/etc/chessalive.env").read_text().splitlines():
+                            if line.startswith("CHESSALIVE_METRICS_TOKEN="):
+                                token = line.split("=", 1)[1].strip()
+                                break
+                    except OSError:
+                        token = None
+                metrics = self._slot_metrics(8083, token)
+        promotable = bool(complete and not in_sync and not busy and not pending and current and current.get("protocol") == 1)
+        reason = (
+            "operation_in_progress" if busy else
+            "recovery_required" if pending else
+            "ready_to_promote" if promotable else
+            "already_live" if in_sync and complete else
+            "no_preprod_release" if not rel_id else
+            "incomplete_release" if not complete else
+            "production_upgrade_required"
+        )
+        return {
+            "releaseId": rel_id,
+            "slot": "preprod",
+            "port": 8083,
+            "endpoint": "127.0.0.1:8083",
+            "complete": complete,
+            "healthy": healthy,
+            "systemdState": sys_active or ("active" if healthy else "inactive"),
+            "inSyncWithProd": in_sync,
+            "promotable": promotable,
+            "reason": reason,
+            "build": build,
+            "version": build.get("version"),
+            "commitHash": build.get("commitHash"),
+            "commitMessage": build.get("commitMessage"),
+            "commitDate": build.get("commitDate"),
+            "traffic": {
+                "webSockets": metrics.get("webSockets") if metrics.get("webSockets") is not None else 0,
+                "chatSockets": metrics.get("chatSockets") if metrics.get("chatSockets") is not None else 0,
+                "activeUsers5m": metrics.get("activeUsers5m"),
+                "httpRequestsTotal": metrics.get("httpRequestsTotal"),
+            },
+            "resources": {
+                "memoryBytes": cgroup_mem if cgroup_mem is not None else metrics.get("memoryBytes"),
+                "peakMemoryBytes": cgroup_peak,
+                "cpuSeconds": metrics.get("cpuSeconds") if metrics.get("cpuSeconds") is not None else (round(cgroup_cpu / 1e9, 2) if cgroup_cpu is not None else None),
+                "dbPoolInUse": metrics.get("dbPoolInUse"),
+                "dbPoolMax": metrics.get("dbPoolMax") or 6,
+            },
+        }
+
     def status(self, busy=False):
         state = read_json(self.state_file)
         current, previous = state.get("current"), state.get("previous")
@@ -575,11 +724,15 @@ class Platform:
         complete = previous and read_json(self.release_dir(previous) / "manifest.json").get("complete") is True
         pending = self.journal.exists()
         compatible = complete and previous.get("protocol") == 1
+        preprod = self.preprod_summary(state, busy=busy, pending=pending)
+        topo = self.topology(current, previous, busy=busy, pending=pending)
+        topo["preprod"] = preprod
         return {"available": bool(compatible and not busy and not pending),
                 "reason": "operation_in_progress" if busy else "recovery_required" if pending else "ready" if compatible else "fallback_requires_upgrade" if complete else "no_complete_fallback",
                 "requiresIdle": bool(previous and previous.get("protocol") == 0),
                 "current": info(current), "previous": info(previous), "version": (info(previous) or {}).get("version"),
-                "topology": self.topology(current, previous, busy=busy, pending=pending)}
+                "preprod": preprod,
+                "topology": topo}
 
 
 def conservative_catalog_idle(catalog, now_ms):
@@ -738,10 +891,11 @@ def prepare_environment(stage):
     # The stable gateway is deliberately not overwritten/restarted on application releases.
 
 
-def stage_release(platform, stage, slot):
+def stage_release(platform, stage, slot, archive=True):
     metadata = read_json(stage / "release.json")
     release_id = "release-" + time.strftime("%Y%m%dt%H%M%Sz", time.gmtime()) + "-" + secrets.token_hex(3)
-    release = {"id": release_id, "slot": slot, "port": 8081 if slot == "blue" else 8082, "protocol": 1}
+    port = 8083 if slot == "preprod" else (8081 if slot == "blue" else 8082)
+    release = {"id": release_id, "slot": slot, "port": port, "protocol": 1}
     directory = platform.release_dir(release)
     directory.mkdir()
     try:
@@ -754,7 +908,8 @@ def stage_release(platform, stage, slot):
         else:
             shutil.copytree(platform.root / "web", directory / "web", copy_function=os.link)
         manifest(directory, metadata)
-        archive_client(directory, platform.root / "client-releases")
+        if archive:
+            archive_client(directory, platform.root / "client-releases")
     except Exception:
         # Only this newly created directory is ours. It has not yet been returned to
         # the handoff coordinator, published to a slot, or referenced by a journal.
@@ -953,7 +1108,7 @@ def recover_interrupted(platform):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("status", "deploy", "rollback", "recover"))
+    parser.add_argument("mode", choices=("status", "deploy", "preprod", "promote", "rollback", "recover"))
     parser.add_argument("--stage", type=Path)
     args = parser.parse_args()
     platform = Platform()
@@ -988,6 +1143,19 @@ def main():
         raise RuntimeError("A previous interrupted handoff needs recovery before another release")
     state = read_json(platform.state_file)
     current = state.get("current")
+    if args.mode == "preprod":
+        if not args.stage or args.stage.parent != Path("/tmp") or not args.stage.name.startswith("chessd-deploy-") or args.stage.is_symlink() or not args.stage.is_dir():
+            raise ValueError("Invalid deployment staging directory")
+        try:
+            candidate = stage_release(platform, args.stage, "preprod", archive=False)
+            platform.activate_preprod(candidate, stage=args.stage)
+        finally:
+            shutil.rmtree(args.stage)
+        mark("deploy", "done")
+        mark("health", "running")
+        platform.prune()
+        mark("health", "done")
+        return
     if args.mode == "deploy":
         if not args.stage or args.stage.parent != Path("/tmp") or not args.stage.name.startswith("chessd-deploy-") or args.stage.is_symlink() or not args.stage.is_dir():
             raise ValueError("Invalid deployment staging directory")
@@ -998,6 +1166,25 @@ def main():
             # The host controller owns the transaction lock here; all later work
             # uses the isolated release. SSH loss must not run a competing cleanup.
             shutil.rmtree(args.stage)
+    elif args.mode == "promote":
+        preprod = state.get("preprod")
+        if not current:
+            raise RuntimeError("No active production release to hand off from")
+        if not isinstance(preprod, dict) or not preprod.get("id"):
+            raise RuntimeError("No verified pre-prod release is available to promote")
+        if preprod["id"] == current.get("id"):
+            raise RuntimeError("The current pre-prod release is already live in production")
+        if current.get("protocol") != 1:
+            raise RuntimeError("Legacy deployment must complete its initial migration first")
+        mark("promote_verify", "running")
+        release_dir = platform.release_dir(preprod)
+        verify(release_dir)
+        verify_route_shells(release_dir / "web")
+        archive_client(release_dir, platform.root / "client-releases")
+        target_slot = "green" if current["slot"] == "blue" else "blue"
+        candidate = {"id": preprod["id"], "slot": target_slot, "port": 8082 if target_slot == "green" else 8081, "protocol": 1}
+        mark("promote_verify", "done")
+        mark("promote_handoff", "running")
     else:
         candidate = state.get("previous")
         if not current or not candidate:
@@ -1013,8 +1200,10 @@ def main():
         if current.get("protocol") != 1:
             raise RuntimeError("Legacy deployment must complete its initial migration first")
         Handoff(platform).run(current, candidate)
-    mark("rollback_restore" if args.mode == "rollback" else "deploy", "done")
-    mark("rollback_health" if args.mode == "rollback" else "health", "running")
+    step_done = "rollback_restore" if args.mode == "rollback" else "promote_handoff" if args.mode == "promote" else "deploy"
+    step_health = "rollback_health" if args.mode == "rollback" else "promote_health" if args.mode == "promote" else "health"
+    mark(step_done, "done")
+    mark(step_health, "running")
     if not http_json("http://127.0.0.1:8079/health").get("ok"):
         raise RuntimeError("Gateway health verification failed")
     command("systemctl", "enable", "chessd@" + candidate["slot"])
@@ -1022,7 +1211,7 @@ def main():
         command("systemctl", "disable", "chessd@" + current["slot"])
     platform.prune()
     platform.sync_autoscaled_pods(candidate, args.mode)
-    mark("rollback_health" if args.mode == "rollback" else "health", "done")
+    mark(step_health, "done")
 
 
 if __name__ == "__main__":

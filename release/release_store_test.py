@@ -78,6 +78,83 @@ class ImmutableClientControlTests(unittest.TestCase):
         archive_client(first, self.archive)
         self.assertEqual(archive_client(second, self.archive), VERSION)
 
+    def test_resumable_route_shells_must_match_index_and_exist_on_disk(self):
+        loader = (
+            f'<script data-ca-resumable-loader>window.__caShellVersion="{VERSION}";'
+            f'var sources=["/{SCRIPT}?v={VERSION}"];</script>'
+        )
+        good = {
+            "web/index.html": loader,
+            "web/.route-shells/routes.json": json.dumps({"routes": ["/", "/play"]}),
+            "web/.route-shells/home.html": loader,
+            "web/.route-shells/play.html": loader,
+        }
+        rel = self.release("resumable-ok", good)
+        verify(rel)
+        mismatched = dict(good)
+        mismatched["web/.route-shells/play.html"] = loader.replace(VERSION, "c" * 16)
+        with self.assertRaisesRegex(ValueError, "version"):
+            self.release("resumable-bad-version", mismatched)
+        missing_route = dict(good)
+        missing_route["web/.route-shells/routes.json"] = json.dumps({"routes": ["/", "/play", "/coach"]})
+        with self.assertRaisesRegex(ValueError, "Missing route shell coach.html"):
+            self.release("resumable-missing-shell", missing_route)
+
+    def test_resumable_route_shells_allow_verified_per_route_preload_chunks(self):
+        runtime_js = "_expo/static/js/web/__expo-metro-runtime-1111.js"
+        common_js = "_expo/static/js/web/__common-2222.js"
+        index_js = "_expo/static/js/web/index-3333.js"
+        app_js = "_expo/static/js/web/App-4444.js"
+        app_shared_js = "_expo/static/js/web/__app-shared-5555.js"
+        play_setup_js = "_expo/static/js/web/PlaySetup-6666.js"
+        play_shared_js = "_expo/static/js/web/__play-shared-7777.js"
+
+        def shell_doc(extra_chunks):
+            preloads = "".join(
+                f'<link rel="preload" as="script" href="/{chunk}?v={VERSION}">'
+                for chunk in extra_chunks
+            )
+            sources = ",".join(
+                f'"/{chunk}?v={VERSION}"'
+                for chunk in (*extra_chunks, runtime_js, common_js, index_js)
+            )
+            return (
+                f"{preloads}"
+                f'<script data-ca-resumable-loader>window.__caShellVersion="{VERSION}";'
+                f"var sources=[{sources}];</script>"
+            )
+
+        base_files = {
+            "web/" + runtime_js: "runtime",
+            "web/" + common_js: "common",
+            "web/" + index_js: "index",
+            "web/" + app_js: "app",
+            "web/" + app_shared_js: "app-shared",
+            "web/" + play_setup_js: "play-setup",
+            "web/" + play_shared_js: "play-shared",
+            "web/index.html": shell_doc((app_js, app_shared_js)),
+            "web/.route-shells/routes.json": json.dumps({"routes": ["/", "/play", "/analysis"]}),
+            "web/.route-shells/home.html": shell_doc((app_js, app_shared_js)),
+            "web/.route-shells/play.html": shell_doc((app_js, app_shared_js, play_setup_js, play_shared_js)),
+            "web/.route-shells/analysis.html": shell_doc((app_js, app_shared_js, play_setup_js, play_shared_js)),
+        }
+        rel = self.release("resumable-per-route-ok", base_files)
+        verify(rel)
+
+        missing_preload = dict(base_files)
+        del missing_preload["web/" + play_setup_js]
+        with self.assertRaisesRegex(ValueError, "Missing script /_expo/static/js/web/PlaySetup-6666.js referenced by route shell analysis.html"):
+            self.release("resumable-missing-preload", missing_preload)
+
+        other_index_js = "_expo/static/js/web/index-9999.js"
+        mismatched_core = dict(base_files)
+        mismatched_core["web/" + other_index_js] = "other-index"
+        mismatched_core["web/.route-shells/analysis.html"] = (
+            mismatched_core["web/.route-shells/analysis.html"].replace(index_js, other_index_js)
+        )
+        with self.assertRaisesRegex(ValueError, "Route shell analysis.html entry scripts do not match index.html"):
+            self.release("resumable-mismatched-core", mismatched_core)
+
 
 if __name__ == "__main__":
     unittest.main()

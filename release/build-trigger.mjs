@@ -25,6 +25,8 @@ const host = process.env.BUILD_TRIGGER_HOST || "0.0.0.0";
 const port = Number(process.env.BUILD_TRIGGER_PORT || 8787);
 const basicPassword = process.env.BUILD_TRIGGER_TOKEN || "";
 const productionUrl = (process.env.PUBLIC_URL || "https://chessalive.com").replace(/\/$/, "");
+const preprodUrl = (process.env.PREPROD_URL || "https://preprod.129-225-116-198.sslip.io").replace(/\/$/, "");
+const defaultDeployTarget = (process.env.BUILD_DEPLOY_TARGET || "preprod").trim().toLowerCase() === "prod" ? "prod" : "preprod";
 const gitUrl = (process.env.BUILD_GIT_URL || "https://github.com/ChessAlive/ChessAlive").replace(/\/$/, "");
 let commitHash = process.env.BUILD_COMMIT_HASH || "unknown";
 let commitMessage = process.env.BUILD_COMMIT_MESSAGE || "Current release checkout";
@@ -49,6 +51,11 @@ const rollbackSteps = () => [
   ['rollback_prepare', 'Check fallback', 'Verify the complete previous release'],
   ['rollback_restore', 'Restore previous release', 'Restore the app, server, data and service settings together'],
   ['rollback_health', 'Verify production', 'Check health and recover the current release if needed'],
+].map(([id, label, detail]) => ({ id, label, detail, status: 'pending', startedAt: null, finishedAt: null, durationMs: null, peakRssBytes: null }));
+const promoteSteps = () => [
+  ['promote_verify', 'Verify Pre-Prod build', 'Confirm SHA-256 manifest, route shells, and compatibility archive'],
+  ['promote_handoff', 'Promote to Production', 'Zero-disruption chessgate handoff to the free production slot'],
+  ['promote_health', 'Verify production', 'Check gateway health, switch active slot, and retain rollback'],
 ].map(([id, label, detail]) => ({ id, label, detail, status: 'pending', startedAt: null, finishedAt: null, durationMs: null, peakRssBytes: null }));
 let rollback = { available: false, checkedAt: null, reason: 'Checking the previous release' };
 let rollbackRefresh = null;
@@ -203,10 +210,30 @@ function updateStepFromLine(line) {
 function publicState() {
   const production = state.monitor.production || {};
   const deployedCommit = rollback.current ? (rollback.current.commitHash || 'unknown') : (state.release.kind === 'rollback' ? 'unknown' : commitHash);
+  const pp = rollback.preprod || {};
+  const ppCommit = pp.commitHash || 'unknown';
   return {
     serverTime: new Date().toISOString(),
     resources: resources.publicState(),
     rollback,
+    preprod: {
+      url: preprodUrl,
+      enabled: defaultDeployTarget === 'preprod',
+      releaseId: pp.releaseId || null,
+      version: pp.version || null,
+      healthy: Boolean(pp.healthy),
+      systemdState: pp.systemdState || 'inactive',
+      complete: Boolean(pp.complete),
+      promotable: Boolean(pp.promotable),
+      inSyncWithProd: Boolean(pp.inSyncWithProd),
+      reason: pp.reason || 'no_preprod_release',
+      commitHash: ppCommit,
+      commitMessage: pp.commitMessage || (pp.releaseId ? 'Staged pre-prod release' : 'No pre-prod build deployed yet'),
+      commitDate: pp.commitDate || null,
+      gitLink: ppCommit !== 'unknown' ? `${gitUrl}/commit/${ppCommit}` : gitUrl,
+      traffic: pp.traffic || null,
+      resources: pp.resources || null,
+    },
     topology: rollback.topology || null,
     release: { kind: state.release.kind || 'build', status: state.release.status, runId: state.release.runId, startedAt: state.release.startedAt, finishedAt: state.release.finishedAt, exitCode: state.release.exitCode, durationMs: elapsedMs(state.release.startedAt, state.release.finishedAt), metrics: state.release.metrics, steps: state.release.steps.map(item => ({ ...item, durationMs: item.startedAt ? elapsedMs(item.startedAt, item.finishedAt) : item.durationMs })), log: state.release.log.slice(-14_000) },
     production: { url: productionUrl, version: production.version || null, builtAt: production.builtAt || null, commitHash: deployedCommit, commitMessage: rollback.current?.commitMessage || (deployedCommit === 'unknown' ? 'Deployed source metadata unavailable' : commitMessage), commitDate: rollback.current ? rollback.current.commitDate : commitDate, gitLink: deployedCommit !== "unknown" ? `${gitUrl}/commit/${deployedCommit}` : gitUrl },
@@ -276,11 +303,19 @@ function startBuild(kind = 'build') {
   if (state.release.child) return false;
   refreshCommitMetadata();
   const isRollback = kind === 'rollback';
-  state.release = { kind, status: 'running', runId: state.release.runId + 1, startedAt: new Date().toISOString(), finishedAt: null, exitCode: null, log: isRollback ? `Restoring the previous retained release on Mumbai\n` : `Starting full release #${state.release.runId + 1} from ${sourceDir}\n`, steps: isRollback ? rollbackSteps() : stepTemplate(), metrics: emptyMetrics(), child: null };
-  const child = spawn("bash", [isRollback ? './release/rollback-chessd.sh' : './release/local-release.sh'], {
+  const isPromote = kind === 'promote';
+  const targetEnv = defaultDeployTarget;
+  const script = isRollback ? './release/rollback-chessd.sh' : isPromote ? './release/promote-chessd.sh' : './release/local-release.sh';
+  const initialLog = isRollback
+    ? `Restoring the previous retained release on Mumbai\n`
+    : isPromote
+      ? `Promoting verified Pre-Prod release to Mumbai production (zero-disruption handoff)\n`
+      : `Starting full release #${state.release.runId + 1} from ${sourceDir} (target: ${targetEnv})\n`;
+  state.release = { kind, status: 'running', runId: state.release.runId + 1, startedAt: new Date().toISOString(), finishedAt: null, exitCode: null, log: initialLog, steps: isRollback ? rollbackSteps() : isPromote ? promoteSteps() : stepTemplate(), metrics: emptyMetrics(), child: null };
+  const child = spawn("bash", [script], {
     cwd: root,
     detached: true,
-    env: { ...process.env, CHESSALIVE_PROGRESS: "yes", SOURCE_DIR: sourceDir, SOURCE_ROOT: sourceDir, CI_ROOT: root, LOCAL_DEPLOY: isRollback ? 'no' : 'yes', PUBLIC_URL: productionUrl, SKIP_INSTALL: "no", SKIP_TESTS: "no", SKIP_FULL_TESTS: process.env.BUILD_SKIP_FULL_TESTS || "no", SKIP_WEB_SETUP: "yes", SKIP_BUDGETS: process.env.BUILD_SKIP_BUDGETS || "no", SKIP_ASSETS: "yes", SKIP_CONTENT: isRollback ? "yes" : "no", SKIP_DEPLOY: "no" },
+    env: { ...process.env, CHESSALIVE_PROGRESS: "yes", SOURCE_DIR: sourceDir, SOURCE_ROOT: sourceDir, CI_ROOT: root, LOCAL_DEPLOY: (isRollback || isPromote) ? 'no' : 'yes', PUBLIC_URL: productionUrl, PREPROD_URL: preprodUrl, DEPLOY_TARGET: targetEnv, SKIP_INSTALL: "no", SKIP_TESTS: "no", SKIP_FULL_TESTS: process.env.BUILD_SKIP_FULL_TESTS || "no", SKIP_WEB_SETUP: "yes", SKIP_BUDGETS: process.env.BUILD_SKIP_BUDGETS || "no", SKIP_ASSETS: "yes", SKIP_CONTENT: (isRollback || isPromote) ? "yes" : "no", SKIP_DEPLOY: "no" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   state.release.child = child;
@@ -322,6 +357,8 @@ function startBuild(kind = 'build') {
     void refreshRollback();
     void monitorProduction();
     if (isRollback) void sendAdminEmail(code === 0 ? 'ChessAlive rollback completed' : 'ChessAlive rollback needs attention', code === 0 ? 'Previous release restored' : 'Rollback did not complete', code === 0 ? 'The retained previous release is live on Mumbai and passed the health check.' : `Rollback did not complete. Review the operation log. Exit code: ${code ?? 'unknown'}.`);
+    else if (isPromote) void sendAdminEmail(code === 0 ? `ChessAlive Pre-Prod promoted to Production (#${state.release.runId})` : `ChessAlive production promotion #${state.release.runId} failed`, code === 0 ? 'Pre-Prod promoted to Production' : 'Production promotion needs attention', code === 0 ? `The tested Pre-Prod release is now live on Mumbai production with zero-disruption handoff. ${releaseCommitSummary()}` : `Promotion did not complete; production remained on its prior release. Exit code: ${code ?? 'unknown'}.`);
+    else if (targetEnv === 'preprod') void sendAdminEmail(code === 0 ? `ChessAlive Pre-Prod #${state.release.runId} ready for testing` : `ChessAlive Pre-Prod build #${state.release.runId} failed`, code === 0 ? 'Pre-Prod build ready for admin testing' : 'Pre-Prod build needs attention', code === 0 ? `The requested source commit is live on Pre-Prod (${preprodUrl}). Production was not touched. Test thoroughly, then click "Promote to Production" in the Release Console. ${releaseCommitSummary()}` : `The Pre-Prod build did not complete; production was untouched. Exit code: ${code ?? 'unknown'}. ${releaseCommitSummary()}`, releaseCommitHtml(code === 0));
     else void sendAdminEmail(code === 0 ? `ChessAlive release #${state.release.runId} deployed` : `ChessAlive release #${state.release.runId} failed`, code === 0 ? "Release deployed successfully" : "Release needs attention", code === 0 ? `The requested source commit is live on Mumbai production. ${releaseCommitSummary()}` : `The release did not complete, so the requested source commit was not deployed. Exit code: ${code ?? "unknown"}. ${releaseCommitSummary()}`, releaseCommitHtml(code === 0));
   });
   return true;
@@ -329,12 +366,46 @@ function startBuild(kind = 'build') {
 
 async function checkPath(path) {
   const started = Date.now(); const url = `${productionUrl}${path.startsWith("/") ? path : `/${path}`}`;
-  try { const response = await fetch(url, { signal: AbortSignal.timeout(8_000), redirect: "follow" }); return { path, ok: response.ok, status: response.status, latencyMs: Date.now() - started }; }
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(8_000), redirect: "follow" });
+    const contentType = response.headers.get("content-type") || "";
+    if (response.ok && contentType.includes("text/html")) {
+      const html = await response.text();
+      if (html.includes("data-ca-resumable-loader") || html.includes("/_expo/static/js/web/")) {
+        const shellVersion = html.match(/__caShellVersion\s*=\s*["']([^"']+)["']/)?.[1] || null;
+        const scripts = [...html.matchAll(/\/_expo\/static\/js\/web\/[^"'?\s\\]+\.js(?:\?v=([^"'\s\\]+))?/g)];
+        if (!html.includes("data-ca-resumable-loader") || !scripts.length) {
+          return { path, ok: false, status: response.status, latencyMs: Date.now() - started, error: "route shell missing resumable loader or entry scripts" };
+        }
+        for (const match of scripts) {
+          if (shellVersion && match[1] && match[1] !== shellVersion) {
+            return { path, ok: false, status: response.status, latencyMs: Date.now() - started, error: `entry script version ${match[1]} != ${shellVersion}` };
+          }
+        }
+        const indexScript = (scripts.find(m => m[0].includes("/index-")) || scripts[scripts.length - 1])[0];
+        const scriptRes = await fetch(`${productionUrl}${indexScript}`, { method: "HEAD", signal: AbortSignal.timeout(8_000) });
+        if (!scriptRes.ok) {
+          return { path, ok: false, status: scriptRes.status, latencyMs: Date.now() - started, error: `entry script ${indexScript} HTTP ${scriptRes.status}` };
+        }
+        return { path, ok: true, status: response.status, latencyMs: Date.now() - started, shellVersion };
+      }
+    }
+    return { path, ok: response.ok, status: response.status, latencyMs: Date.now() - started };
+  }
   catch (error) { return { path, ok: false, status: 0, latencyMs: Date.now() - started, error: error.message }; }
 }
 
 async function monitorProduction() {
   const checks = await Promise.all(monitorPaths.map(checkPath));
+  const rootShellVersion = checks.find(item => item.path === "/" && item.shellVersion)?.shellVersion || null;
+  if (rootShellVersion) {
+    for (const item of checks) {
+      if (item.ok && item.shellVersion && item.shellVersion !== rootShellVersion) {
+        item.ok = false;
+        item.error = `shellVersion ${item.shellVersion} != root ${rootShellVersion}`;
+      }
+    }
+  }
   const versionCheck = checks.find(item => item.path === "/version"); let version = null;
   if (versionCheck?.ok) { try { const response = await fetch(`${productionUrl}/version`, { signal: AbortSignal.timeout(8_000) }); const body = await response.json(); version = body.version || body; } catch { /* metadata refreshes on the next sweep */ } }
   const criticalFailure = checks.some(item => (item.path === "/" || item.path === "/health" || item.path === "/version") && !item.ok);
@@ -382,6 +453,18 @@ const server = createServer(async (request, response) => {
   if (url.pathname === "/" && request.method === "GET") { response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }); return response.end(dashboardHtml); }
   if (url.pathname === "/api/status" && request.method === "GET") return sendJson(response, 200, publicState());
   if (url.pathname === "/api/build" && request.method === "POST") { if (!startBuild()) return sendJson(response, 409, { error: "a release is already running", ...publicState() }); return sendJson(response, 202, publicState()); }
+  if (url.pathname === '/api/promote' && request.method === 'POST') {
+    if (state.release.child) return sendJson(response, 409, { error: 'a release is already running', ...publicState() });
+    await refreshRollback();
+    if (!rollback.preprod?.promotable) {
+      const reason = rollback.preprod?.reason === 'already_live'
+        ? 'The Pre-Prod build is already live in production'
+        : 'No verified Pre-Prod build is ready to promote';
+      return sendJson(response, 409, { error: reason, ...publicState() });
+    }
+    if (!startBuild('promote')) return sendJson(response, 409, { error: 'a release is already running', ...publicState() });
+    return sendJson(response, 202, publicState());
+  }
   if (url.pathname === '/api/rollback' && request.method === 'POST') {
     if (state.release.child) return sendJson(response, 409, { error: 'a release is already running', ...publicState() });
     await refreshRollback();

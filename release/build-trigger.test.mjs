@@ -48,8 +48,19 @@ for step in rollback_prepare rollback_restore rollback_health; do
 done
 printf '%s' '{"available":true,"current":{"commitHash":"bbbbbbb","commitMessage":"Restored release","version":"previous"},"previous":{"commitHash":"aaaaaaa"}}' > rollback-status.json
 `);
+    await writeFile(join(root, 'release/promote-chessd.sh'), `#!/usr/bin/env bash
+set -eu
+for step in promote_verify promote_handoff promote_health; do
+  printf '@@CHESSALIVE_STEP {"id":"%s","status":"running"}\\n' "$step"
+  sleep 0.1
+  printf '@@CHESSALIVE_STEP {"id":"%s","status":"done"}\\n' "$step"
+done
+printf '%s' '{"available":true,"current":{"commitHash":"ccccccc","commitMessage":"Promoted release","version":"promoted"},"previous":{"commitHash":"bbbbbbb"},"preprod":{"releaseId":"release-20261120t120000z-cccccc","promotable":false,"inSyncWithProd":true,"healthy":true,"reason":"already_live","commitHash":"ccccccc","version":"promoted"}}' > rollback-status.json
+`);
     await start();
     assert.equal((await fetch(`${base}/api/status`)).status, 401);
+    assert.equal((await fetch(`${base}/api/promote`, { method: 'POST' })).status, 401);
+    assert.equal((await fetch(`${base}/api/promote`, { method: 'POST', headers: { cookie } })).status, 409);
     assert.equal((await fetch(`${base}/api/rollback`, { method: 'POST' })).status, 401);
     assert.equal((await fetch(`${base}/api/rollback`, { method: 'POST', headers: { cookie } })).status, 409);
     assert.equal((await fetch(`${base}/branding/chessalive-logo.png`)).headers.get('content-type'), 'image/png');
@@ -89,5 +100,20 @@ printf '%s' '{"available":true,"current":{"commitHash":"bbbbbbb","commitMessage"
     assert.equal(data.production.commitMessage, 'Restored release');
     await stop(); await start();
     data = await status(); assert.equal(data.release.kind, 'rollback'); assert.equal(data.release.runId, 2);
+    await writeFile(join(root, 'rollback-status.json'), JSON.stringify({
+      available: true,
+      current: { commitHash: 'bbbbbbb' },
+      previous: { commitHash: 'aaaaaaa' },
+      preprod: { releaseId: 'release-20261120t120000z-cccccc', promotable: true, inSyncWithProd: false, healthy: true, reason: 'ready_to_promote', commitHash: 'ccccccc', version: 'promoted' },
+    }));
+    assert.equal((await fetch(`${base}/api/promote`, { method: 'POST', headers: { cookie } })).status, 202);
+    assert.equal((await fetch(`${base}/api/promote`, { method: 'POST', headers: { cookie } })).status, 409);
+    for (let i = 0; i < 100; i++) { data = await status(); if (data.release.status !== 'running' && data.production.commitHash === 'ccccccc') break; await pause(30); }
+    assert.equal(data.release.kind, 'promote');
+    assert.equal(data.release.status, 'succeeded');
+    assert.deepEqual(data.release.steps.map(step => step.status), ['done', 'done', 'done']);
+    assert.equal(data.production.commitHash, 'ccccccc');
+    assert.equal(data.preprod.inSyncWithProd, true);
+    assert.equal(data.preprod.promotable, false);
   } finally { await stop(); production.close(); await rm(root, { recursive: true, force: true }); }
 });

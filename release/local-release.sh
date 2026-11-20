@@ -53,6 +53,8 @@ if [[ "${low_mem_host}" == yes && "${DEPLOY_REMOTE:-no}" == yes && -n "${DEPLOY_
             SKIP_ASSETS='${SKIP_ASSETS:-yes}' \
             SKIP_CONTENT='${SKIP_CONTENT:-no}' \
             SKIP_DEPLOY='${SKIP_DEPLOY:-no}' \
+            DEPLOY_TARGET='${DEPLOY_TARGET:-prod}' \
+            PREPROD_URL='${PREPROD_URL:-}' \
             DEPLOY_REMOTE='no' \
             LOCAL_DEPLOY='yes' \
             PUBLIC_URL='${PUBLIC_URL:-https://chessalive.com}' \
@@ -190,8 +192,14 @@ SKIP_WEB="${SKIP_WEB:-no}"
 SKIP_ASSETS="${SKIP_ASSETS:-yes}"
 SKIP_INSTALL="${SKIP_INSTALL:-no}"
 SKIP_DEPLOY="${SKIP_DEPLOY:-no}"
+DEPLOY_TARGET="${DEPLOY_TARGET:-prod}"
 # Build-only invocations stay read-only unless content publishing is requested.
-SKIP_CONTENT="${SKIP_CONTENT:-${SKIP_DEPLOY}}"
+# Pre-prod deploys must never mutate production's live content catalog.
+if [[ "${DEPLOY_TARGET}" == "preprod" && "${ALLOW_PREPROD_CONTENT_PUBLISH:-no}" != yes ]]; then
+  SKIP_CONTENT="yes"
+else
+  SKIP_CONTENT="${SKIP_CONTENT:-${SKIP_DEPLOY}}"
+fi
 DEPLOY_REMOTE="${DEPLOY_REMOTE:-no}"
 DEPLOY_HOST="${DEPLOY_HOST:-161.118.175.12}"
 DEPLOY_USER="${DEPLOY_USER:-ubuntu}"
@@ -416,14 +424,16 @@ if [[ "${SKIP_DEPLOY}" == yes ]]; then
   progress_mark health skipped
 else
   if [[ "${DEPLOY_REMOTE}" == yes ]]; then
-    say "Deploying from this build host to ${DEPLOY_USER}@${DEPLOY_HOST}"
+    say "Deploying (${DEPLOY_TARGET}) from this build host to ${DEPLOY_USER}@${DEPLOY_HOST}"
     env LOCAL_DEPLOY=no TARGET_ARCH="${BUILD_ARCH}" OCI_HOST="${DEPLOY_HOST}" OCI_USER="${DEPLOY_USER}" \
+      DEPLOY_TARGET="${DEPLOY_TARGET}" PREPROD_URL="${PREPROD_URL:-}" \
       DEPLOY_POD_HOSTS="${DEPLOY_POD_HOSTS:-}" OKE_DEPLOY_ENABLED="${OKE_DEPLOY_ENABLED:-no}" \
       SSH_KEY="${DEPLOY_SSH_KEY}" SKIP_BUILD=yes SKIP_WEB="${SKIP_WEB}" \
       PUBLIC_URL="${PUBLIC_URL}" SOURCE_ROOT="${SOURCE_DIR}" CI_ROOT="${CI_ROOT_DIR}" "${CI_ROOT_DIR}/release/deploy-chessd.sh"
   else
-    say 'Deploying locally on this host (no SSH, Jenkins, or Cloud Build)'
+    say "Deploying (${DEPLOY_TARGET}) locally on this host (no SSH, Jenkins, or Cloud Build)"
     env LOCAL_DEPLOY=yes TARGET_ARCH="${BUILD_ARCH}" \
+      DEPLOY_TARGET="${DEPLOY_TARGET}" PREPROD_URL="${PREPROD_URL:-}" \
       DEPLOY_POD_HOSTS="${DEPLOY_POD_HOSTS:-}" OKE_DEPLOY_ENABLED="${OKE_DEPLOY_ENABLED:-no}" \
       SKIP_BUILD=yes SKIP_WEB="${SKIP_WEB}" \
       PUBLIC_URL="${PUBLIC_URL}" SOURCE_ROOT="${SOURCE_DIR}" CI_ROOT="${CI_ROOT_DIR}" "${CI_ROOT_DIR}/release/deploy-chessd.sh"
