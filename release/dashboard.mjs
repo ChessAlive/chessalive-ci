@@ -12,7 +12,7 @@ const styles = String.raw`
 @media(max-width:760px){.resource-hosts{grid-template-columns:minmax(0,1fr);gap:14px}.host-value{font-size:23px}.host-metrics{gap:20px}.network-metric{display:flex}.network-value{margin:0}.resource-provider{display:block}.resource-provider p{margin-top:5px}.infrastructure-heading p{max-width:260px;line-height:1.6}}
 @media(max-width:420px){.infrastructure-heading{gap:10px}.resource-refresh{font-size:8px}.infrastructure-heading h2{font-size:14px}.infrastructure-heading p{font-size:9px;max-width:205px}.host-metrics{gap:12px}.host-value{font-size:19px;letter-spacing:-.7px}.host-stat-label{font-size:8px}.host-capacity{font-size:8px}.host-head{gap:10px}.host-title h3{font-size:13px}.host-role{font-size:9px}.network-value{font-size:10px}.network-label{font-size:8px}.host-observation{font-size:8px}.host-details summary{font-size:9px}.resource-provider{font-size:8px}}
 
-.release-actions{display:flex;align-items:stretch;justify-content:flex-end;flex-wrap:wrap;gap:9px}.promote-btn{background:#f5c542;color:#1e2315;padding:14px 18px;border:1px solid #ffe082;border-radius:8px;font-size:12px;font-weight:750;box-shadow:0 3px 10px rgba(245,197,66,.22);display:inline-flex;align-items:center;justify-content:center;gap:14px;min-height:45px;transition:background .15s,transform .15s}.promote-btn:hover:not(:disabled){background:#ffd55e;transform:translateY(-1px)}.preprod-card{border-color:#e5c98b!important}.preprod-card:before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:#d79032}.preprod-link-pill{display:inline-flex;align-items:center;gap:6px;margin-top:8px;padding:6px 10px;border-radius:6px;background:#fff6e5;border:1px solid #ecd5a6;color:#7d4a07;font-size:11px;font-weight:650}.preprod-link-pill:hover{background:#ffedd0;text-decoration:none}.secondary{border:1px solid #51716f;background:#ffffff06;border-radius:8px;color:#bad1ca;min-height:45px;padding:12px 14px;font-size:11px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:10px;transition:background .15s}.secondary:hover:not(:disabled){background:#ffffff10;border-color:#83a79a}.rollback-note{font-size:9px;color:#8aa89e;line-height:1.5;max-width:460px;margin:7px 0 0 auto;overflow-wrap:anywhere}.provider-heading{margin-top:22px}.provider-heading h3{font-size:12px;font-weight:650;letter-spacing:-.2px;margin:0}.provider-heading p{max-width:none}.provider-card .host-head{padding-bottom:14px}.provider-symbol{font-size:17px;background:#f2f4f8;border-color:#e3e8ed;color:#6a7e8f}.provider-summary{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:0 22px 15px}.provider-summary-label{display:block;font-size:9px;color:#8a9699;margin-bottom:7px}.provider-summary-value{display:block;font-size:11px;font-weight:600;line-height:1.6;color:#4b6867}.provider-balance{border-top:1px solid #edf0e8;margin:0 22px 13px;padding-top:11px;font-size:9px;color:#82908e;line-height:1.6;display:flex;gap:12px;justify-content:space-between}.provider-balance strong{font-weight:600;color:#6c7874;text-align:right}.provider-section{border-top:1px solid #e5ece3;margin-top:9px}.provider-section>summary{padding:13px 0;font-size:10px;color:#4d6c63;gap:12px;justify-content:flex-start}.provider-section>summary .badge{margin-left:auto;font-size:8px;padding:3px 6px}.provider-section>summary:after{width:10px;flex:none;text-align:center}.provider-section:first-child{margin-top:0}.provider-section-content{padding-bottom:8px}.provider-item{padding-top:11px;margin-top:11px;border-top:1px solid #e6ebe2}.provider-item:first-child{margin-top:0;padding-top:0;border-top:0}.provider-item-title{font-size:11px;line-height:1.5;color:#3c6258;overflow-wrap:anywhere;margin:0 0 5px}.provider-item-meta{font-size:9px;line-height:1.65;color:#8a9594;margin:0 0 8px;overflow-wrap:anywhere}.provider-metric-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.provider-metric{background:#f1f5ed;border:1px solid #e8ede3;border-radius:6px;padding:10px;min-width:0}.provider-metric-label{font-size:8px;color:#708479;line-height:1.5;display:block}.provider-metric strong{display:block;font:12px/1.65 var(--mono);color:#42655c;margin:3px 0}.provider-metric small{display:block;font-size:8px;line-height:1.6;color:#89968e;overflow-wrap:anywhere}.provider-unavailable{font-size:9px;line-height:1.7;color:#8d795b;margin:2px 0 10px;overflow-wrap:anywhere}.provider-empty{font-size:9px;line-height:1.7;color:#84928d;margin:2px 0 10px}.provider-table-wrap{max-height:320px;overflow:auto;scrollbar-color:#ccd9ce transparent}.provider-usage-table{table-layout:fixed}.provider-usage-table th{width:63%;padding-right:10px;line-height:1.5}.provider-usage-table td{width:37%}.provider-usage-table small{display:block;font-size:8px;color:#8c9997;font-family:inherit;font-weight:400;margin-top:4px;line-height:1.6}.provider-usage-table th strong{font-size:9px;font-weight:600;color:#526f65}.provider-scope{padding:9px 0 3px;font-size:9px;line-height:1.7;color:#84948c;margin:0}.provider-free-note{margin:12px 0 0;padding:11px 12px;border:1px solid #e5eadf;border-radius:6px;background:#f0f4e9;font-size:9px;line-height:1.7;color:#798970}.provider-free-note strong{display:block;color:#5e7759;font-weight:600;margin-bottom:3px}
+.release-actions{display:flex;align-items:stretch;justify-content:flex-end;flex-wrap:wrap;gap:9px}.approve-btn{background:#0b7c60;color:#fff;padding:14px 17px;border:1px solid #28a684;border-radius:8px;font-size:12px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;gap:10px;min-height:45px;transition:background .15s,transform .15s}.approve-btn:hover:not(:disabled){background:#0d9271;transform:translateY(-1px)}.approve-btn.approved{background:#184239;color:#b8e8d7;border-color:#3a7d6c}.promote-btn{background:#f5c542;color:#1e2315;padding:14px 18px;border:1px solid #ffe082;border-radius:8px;font-size:12px;font-weight:750;box-shadow:0 3px 10px rgba(245,197,66,.22);display:inline-flex;align-items:center;justify-content:center;gap:14px;min-height:45px;transition:background .15s,transform .15s}.promote-btn:hover:not(:disabled){background:#ffd55e;transform:translateY(-1px)}.user-pill{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;background:#edf5f1;border:1px solid #d2e4dc;font-size:11px;font-weight:650;color:#194b3e}.logout-btn{padding:6px 10px;border-radius:6px;border:1px solid #d5ded9;background:#fff;color:#4a5d64;font-size:11px;font-weight:600}.logout-btn:hover{background:#f5f7f5}.approval-gate{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}.approval-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}.approval-title{font-size:11px;font-weight:700;letter-spacing:.3px;color:var(--ink)}.approval-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}.approval-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 11px;border-radius:8px;border:1px solid #e6ece8;background:#fafbf8;font-size:11px}.approval-item.done{background:#edf8f2;border-color:#c8e8d7}.approval-who{display:grid;gap:2px;min-width:0}.approval-who strong{font-size:11px;color:var(--ink)}.approval-who span{font-size:9px;color:var(--muted);font-family:var(--mono);overflow-wrap:anywhere}.approval-state{font-size:10px;font-weight:700;white-space:nowrap}.approval-item.done .approval-state{color:#0e7457}.approval-item.wait .approval-state{color:#9a5a0c}.login-card select{width:100%;padding:12px 13px;border:1px solid #dbe3da;background:#fafbf8;border-radius:7px;color:var(--ink);font-size:14px;margin-bottom:14px}.login-otp-info{margin:0 0 14px;padding:11px 13px;border-radius:8px;background:#edf8f2;border:1px solid #cde8d9;color:#145743;font-size:11px;line-height:1.6}.login-back{margin-top:10px;width:100%;padding:10px;border:1px solid #dbe3da;background:#fff;border-radius:7px;color:#51646c;font-size:12px;font-weight:600}.preprod-card{border-color:#e5c98b!important}.preprod-card:before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:#d79032}.preprod-link-pill{display:inline-flex;align-items:center;gap:6px;margin-top:8px;padding:6px 10px;border-radius:6px;background:#fff6e5;border:1px solid #ecd5a6;color:#7d4a07;font-size:11px;font-weight:650}.preprod-link-pill:hover{background:#ffedd0;text-decoration:none}.secondary{border:1px solid #51716f;background:#ffffff06;border-radius:8px;color:#bad1ca;min-height:45px;padding:12px 14px;font-size:11px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:10px;transition:background .15s}.secondary:hover:not(:disabled){background:#ffffff10;border-color:#83a79a}.rollback-note{font-size:9px;color:#8aa89e;line-height:1.5;max-width:520px;margin:7px 0 0 auto;overflow-wrap:anywhere}.provider-heading{margin-top:22px}.provider-heading h3{font-size:12px;font-weight:650;letter-spacing:-.2px;margin:0}.provider-heading p{max-width:none}.provider-card .host-head{padding-bottom:14px}.provider-symbol{font-size:17px;background:#f2f4f8;border-color:#e3e8ed;color:#6a7e8f}.provider-summary{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:0 22px 15px}.provider-summary-label{display:block;font-size:9px;color:#8a9699;margin-bottom:7px}.provider-summary-value{display:block;font-size:11px;font-weight:600;line-height:1.6;color:#4b6867}.provider-balance{border-top:1px solid #edf0e8;margin:0 22px 13px;padding-top:11px;font-size:9px;color:#82908e;line-height:1.6;display:flex;gap:12px;justify-content:space-between}.provider-balance strong{font-weight:600;color:#6c7874;text-align:right}.provider-section{border-top:1px solid #e5ece3;margin-top:9px}.provider-section>summary{padding:13px 0;font-size:10px;color:#4d6c63;gap:12px;justify-content:flex-start}.provider-section>summary .badge{margin-left:auto;font-size:8px;padding:3px 6px}.provider-section>summary:after{width:10px;flex:none;text-align:center}.provider-section:first-child{margin-top:0}.provider-section-content{padding-bottom:8px}.provider-item{padding-top:11px;margin-top:11px;border-top:1px solid #e6ebe2}.provider-item:first-child{margin-top:0;padding-top:0;border-top:0}.provider-item-title{font-size:11px;line-height:1.5;color:#3c6258;overflow-wrap:anywhere;margin:0 0 5px}.provider-item-meta{font-size:9px;line-height:1.65;color:#8a9594;margin:0 0 8px;overflow-wrap:anywhere}.provider-metric-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.provider-metric{background:#f1f5ed;border:1px solid #e8ede3;border-radius:6px;padding:10px;min-width:0}.provider-metric-label{font-size:8px;color:#708479;line-height:1.5;display:block}.provider-metric strong{display:block;font:12px/1.65 var(--mono);color:#42655c;margin:3px 0}.provider-metric small{display:block;font-size:8px;line-height:1.6;color:#89968e;overflow-wrap:anywhere}.provider-unavailable{font-size:9px;line-height:1.7;color:#8d795b;margin:2px 0 10px;overflow-wrap:anywhere}.provider-empty{font-size:9px;line-height:1.7;color:#84928d;margin:2px 0 10px}.provider-table-wrap{max-height:320px;overflow:auto;scrollbar-color:#ccd9ce transparent}.provider-usage-table{table-layout:fixed}.provider-usage-table th{width:63%;padding-right:10px;line-height:1.5}.provider-usage-table td{width:37%}.provider-usage-table small{display:block;font-size:8px;color:#8c9997;font-family:inherit;font-weight:400;margin-top:4px;line-height:1.6}.provider-usage-table th strong{font-size:9px;font-weight:600;color:#526f65}.provider-scope{padding:9px 0 3px;font-size:9px;line-height:1.7;color:#84948c;margin:0}.provider-free-note{margin:12px 0 0;padding:11px 12px;border:1px solid #e5eadf;border-radius:6px;background:#f0f4e9;font-size:9px;line-height:1.7;color:#798970}.provider-free-note strong{display:block;color:#5e7759;font-weight:600;margin-bottom:3px}
 @media(max-width:900px) and (min-width:621px){.release-actions{flex-direction:column}.hero-action .primary{justify-content:space-between}.rollback-note{max-width:220px}}
 @media(max-width:620px){.release-actions{display:grid;grid-template-columns:minmax(0,1fr)}.release-actions .secondary{justify-content:space-between}.rollback-note{max-width:none;margin:7px 0 0;text-align:center}}
 .ui-icon{display:inline-block;width:16px;height:16px;vertical-align:middle;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round;flex:none}.host-symbol .ui-icon{width:22px;height:22px;stroke-width:1.45}.host-stat-label{display:flex;align-items:center;gap:5px}.host-stat-label .ui-icon{width:12px;height:12px;color:#7f9b8f;stroke-width:1.6}.network-label{display:inline-flex;align-items:center;gap:6px}.network-label .ui-icon{height:14px;width:14px;color:#36876d}.resource-details-body h4 .ui-icon{height:13px;width:13px;margin-right:6px;color:#749181}.provider-section>summary>.ui-icon{height:14px;width:14px;color:#779589}.provider-metric-label{display:flex;align-items:center;gap:5px}.provider-metric-label .ui-icon{height:12px;width:12px;color:#819b89}.metric-icon .ui-icon{width:18px;height:18px}.provider-item-title{letter-spacing:0!important;text-transform:none!important;font-size:11px!important}
@@ -88,25 +88,42 @@ function dashboardClient() {
     const running = snapshot?.release?.status === 'running', rollingBack = snapshot?.release?.kind === 'rollback', promoting = snapshot?.release?.kind === 'promote';
     const disabled = !connected || sessionExpired || actionPending || running;
     const preprod = snapshot?.preprod || {};
+    const approvals = preprod.approvals || { requiredCount: 3, approvedCount: 0, allApproved: false, approvers: [], pending: [] };
+    const me = snapshot?.currentUser || null;
+    const myApproval = me ? (approvals.approvers || []).find(a => a.id === me.id) : null;
+    const iApproved = Boolean(myApproval?.approved);
+    const artifactReady = preprod.artifactPromotable === true;
+    const canApprove = Boolean(me && me.otpVerified && artifactReady);
     const isPreprodFlow = preprod.enabled !== false;
     $('release').disabled = disabled;
+    $('approveBtn').disabled = disabled || !canApprove;
+    $('approveBtn').className = 'approve-btn' + (iApproved ? ' approved' : '');
     $('promote').disabled = disabled || preprod.promotable !== true;
     $('rollback').disabled = disabled || snapshot?.rollback?.available !== true;
     $('releaseLabel').textContent = actionPending && actionKind === 'build' ? (isPreprodFlow ? 'Deploying Pre-Prod…' : 'Requesting release…') : running && !rollingBack && !promoting ? (isPreprodFlow ? 'Building Pre-Prod…' : 'Release in progress') : (isPreprodFlow ? 'Build & deploy to Pre-Prod' : 'Build & deploy');
-    $('promoteLabel').textContent = actionPending && actionKind === 'promote' ? 'Promoting to Prod…' : running && promoting ? 'Promoting to Prod…' : 'Promote to Production';
+    $('approveLabel').textContent = actionPending && actionKind === 'approve'
+      ? (iApproved ? 'Revoking…' : 'Approving…')
+      : iApproved
+        ? 'Approved as ' + (me?.name || 'Admin') + ' (click to revoke)'
+        : 'Approve as ' + (me?.name || 'Admin');
+    $('promoteLabel').textContent = actionPending && actionKind === 'promote' ? 'Promoting to Prod…' : running && promoting ? 'Promoting to Prod…' : 'Promote to Production (' + approvals.approvedCount + '/' + approvals.requiredCount + ')';
     $('rollbackLabel').textContent = actionPending && actionKind === 'rollback' ? 'Requesting rollback…' : running && rollingBack ? 'Restoring release…' : 'Roll back';
     const version = rollbackVersion();
     const ppSha = preprod.commitHash && preprod.commitHash !== 'unknown' ? preprod.commitHash.slice(0, 10) : null;
+    const pendingNames = (approvals.pending || []).map(p => p.name).join(', ');
     const promoteNote = preprod.promotable
-      ? 'Pre-Prod tested & ready to promote' + (preprod.version ? ' · ' + preprod.version : '') + (ppSha ? ' (' + ppSha + ')' : '')
-      : preprod.inSyncWithProd && preprod.releaseId
-        ? 'Pre-Prod matches live Production · build a new release to test'
-        : preprod.reason === 'operation_in_progress'
-          ? 'Operation in progress'
-          : 'Deploy a build to Pre-Prod first, test it, then promote';
+      ? 'All 3/3 admins approved' + (preprod.version ? ' · ' + preprod.version : '') + (ppSha ? ' (' + ppSha + ')' : '') + ' · Ready to Promote!'
+      : artifactReady
+        ? 'Approvals ' + approvals.approvedCount + '/' + approvals.requiredCount + (pendingNames ? ' · waiting on ' + pendingNames : '')
+        : preprod.inSyncWithProd && preprod.releaseId
+          ? 'Pre-Prod matches live Production · build a new release to test'
+          : preprod.reason === 'operation_in_progress'
+            ? 'Operation in progress'
+            : 'Deploy a build to Pre-Prod first, get all 3 admin approvals, then promote';
     const fbNote = snapshot?.rollback?.available ? 'Rollback ready' + (version ? ' · ' + version : '') : (snapshot?.rollback?.reason || 'Checking fallback');
     $('rollbackNote').textContent = promoteNote + '  |  ' + fbNote;
     $('promote').title = promoteNote;
+    $('approveBtn').title = !canApprove ? (artifactReady ? 'Sign in with your personal email verification code to approve' : 'Deploy a new Pre-Prod build first') : (iApproved ? 'Revoke your approval for this build' : 'Approve this tested Pre-Prod build as ' + me.name);
     $('rollback').title = snapshot?.rollback?.available ? 'Restore previous release' + (version ? ' · ' + version : '') : fbNote;
     $('rollbackNote').title = snapshot?.rollback?.checkedAt ? 'Last checked ' + date(snapshot.rollback.checkedAt) : '';
   }
@@ -628,15 +645,31 @@ function dashboardClient() {
     $('pipelineSubtitle').textContent = running ? (release.kind === 'rollback' ? 'Restoring the previous release and verifying production health' : release.kind === 'promote' ? 'Moving tested Pre-Prod build to Production via zero-disruption handoff' : 'Building and deploying to isolated Pre-Prod (Production untouched)') : release.runId ? (release.kind === 'rollback' ? 'Rollback #' : release.kind === 'promote' ? 'Promote #' : 'Release #') + release.runId + ' · ' + (release.finishedAt ? 'Finished ' + date(release.finishedAt) : 'Started ' + date(release.startedAt)) : 'Every stage, measured from start to finish';
     renderSteps(steps); memoryChart(release.metrics);
     const preprod = data.preprod || {};
+    const me = data.currentUser || null;
+    if ($('userPill')) {
+      $('userPill').textContent = me ? (me.name + ' · ' + me.email) : 'Signed in';
+    }
     const ppUrl = safeUrl(preprod.url);
     $('preprodLink').href = ppUrl; $('headerPreprod').href = ppUrl;
     $('preprodHost').textContent = ppUrl === '#' ? 'Pre-Prod unconfigured' : new URL(ppUrl).host;
-    pill($('preprodStatus'), preprod.promotable ? 'orange' : preprod.healthy ? 'green' : '', preprod.promotable ? 'Ready to promote' : preprod.inSyncWithProd && preprod.releaseId ? 'Matches prod' : preprod.healthy ? 'Healthy' : 'Inactive');
+    const approvals = preprod.approvals || { requiredCount: 3, approvedCount: 0, allApproved: false, approvers: [] };
+    pill($('preprodStatus'), preprod.promotable ? 'green' : preprod.artifactPromotable ? 'orange' : preprod.healthy ? 'green' : '', preprod.promotable ? '3/3 Approved · Ready' : preprod.artifactPromotable ? approvals.approvedCount + '/3 Approved' : preprod.inSyncWithProd && preprod.releaseId ? 'Matches prod' : preprod.healthy ? 'Healthy' : 'Inactive');
     $('preprodVersion').textContent = preprod.version || '—';
     $('preprodReleaseId').textContent = preprod.releaseId || '—';
     $('preprodCommit').textContent = preprod.commitHash && preprod.commitHash !== 'unknown' ? preprod.commitHash.slice(0, 12) : 'Unavailable';
     $('preprodCommit').href = safeUrl(preprod.gitLink);
     $('preprodCommitMessage').textContent = preprod.commitMessage || 'No pre-prod build deployed yet.';
+    if ($('approvalBadge')) {
+      pill($('approvalBadge'), approvals.allApproved ? 'green' : approvals.approvedCount > 0 ? 'orange' : '', approvals.approvedCount + ' / ' + approvals.requiredCount + ' Approved');
+    }
+    if ($('approvalList')) {
+      $('approvalList').innerHTML = (approvals.approvers || []).map(item =>
+        '<li class="approval-item ' + (item.approved ? 'done' : 'wait') + '">' +
+          '<div class="approval-who"><strong>' + safe(item.name) + (me && me.id === item.id ? ' (You)' : '') + '</strong><span>' + safe(item.email) + '</span></div>' +
+          '<span class="approval-state">' + (item.approved ? '✓ Approved' + (item.approvedAt ? ' · ' + safe(date(item.approvedAt)) : '') : '○ Pending') + '</span>' +
+        '</li>'
+      ).join('') || '<li class="empty">No approvers configured.</li>';
+    }
     const version = prod.version;
     $('version').textContent = typeof version === 'string' ? version : version?.displayVersion || version?.version || '—';
     $('deployed').textContent = date(prod.builtAt);
@@ -719,9 +752,46 @@ function dashboardClient() {
       updateActions();
     }
   }
+  async function toggleApproval() {
+    if ($('approveBtn').disabled || actionPending) return;
+    const preprod = snapshot?.preprod || {};
+    const me = snapshot?.currentUser || null;
+    const myApproval = me ? (preprod.approvals?.approvers || []).find(a => a.id === me.id) : null;
+    const iApproved = Boolean(myApproval?.approved);
+    const ppLabel = [preprod.version, preprod.releaseId].filter(Boolean).join(' · ');
+    const msg = iApproved
+      ? 'Revoke your promotion approval as ' + me.name + ' for ' + ppLabel + '?'
+      : 'Approve Pre-Prod build (' + ppLabel + ') as ' + me.name + ' (' + me.email + ') for Production promotion? All 3 admins (Lakshmi, Vinoth, Avinash) must approve before Promote unlocks.';
+    if (!window.confirm(msg)) return;
+    actionPending = true; actionKind = 'approve'; actionMessage = ''; updateActions(); banner('');
+    try {
+      const response = await fetch(iApproved ? '/api/promote/revoke' : '/api/promote/approve', { method: 'POST', signal: AbortSignal.timeout(15000), headers: { 'content-type': 'application/json' }, body: '{}' });
+      if (response.status === 401) { expireSession(); return; }
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (data.release) render(data);
+        throw new Error(typeof data.error === 'string' ? data.error : 'Approval update failed (' + response.status + ').');
+      }
+      if (data.release) render(data);
+      else await refresh();
+    } catch (error) {
+      actionMessage = error.message || 'Unable to update approval.';
+      banner(actionMessage);
+      await refresh();
+    } finally {
+      actionPending = false; actionKind = null;
+      updateActions();
+    }
+  }
+  async function logout() {
+    try { await fetch('/api/logout', { method: 'POST', signal: AbortSignal.timeout(5000) }); } catch { /* ignore */ }
+    location.reload();
+  }
   $('release').addEventListener('click', () => void requestRelease('build'));
+  $('approveBtn').addEventListener('click', () => void toggleApproval());
   $('promote').addEventListener('click', () => void requestRelease('promote'));
   $('rollback').addEventListener('click', () => void requestRelease('rollback'));
+  if ($('logoutBtn')) $('logoutBtn').addEventListener('click', () => void logout());
   $('autoscroll').addEventListener('change', () => { if ($('autoscroll').checked) $('log').scrollTop = $('log').scrollHeight; });
   $('downloadLog').addEventListener('click', () => {
     if (!lastLog) return;
@@ -741,36 +811,104 @@ function dashboardClient() {
 }
 
 function loginClient() {
-  const form = document.getElementById('login'), password = document.getElementById('password'), button = document.getElementById('submit'), error = document.getElementById('error');
-  form.addEventListener('submit', async event => {
-    event.preventDefault(); button.disabled = true; error.textContent = ''; document.getElementById('submitLabel').textContent = 'Opening console…';
+  const step1 = document.getElementById('login'), step2 = document.getElementById('otpForm');
+  const emailSelect = document.getElementById('email'), password = document.getElementById('password');
+  const button = document.getElementById('submit'), submitLabel = document.getElementById('submitLabel');
+  const otpInput = document.getElementById('otpCode'), verifyBtn = document.getElementById('verifyBtn'), verifyLabel = document.getElementById('verifyLabel');
+  const otpInfo = document.getElementById('otpInfo'), backBtn = document.getElementById('backBtn'), error = document.getElementById('error');
+  let requireOtp = true, challengeId = '', activeEmail = '';
+
+  fetch('/api/login/config', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(cfg => {
+    if (!cfg) return;
+    requireOtp = cfg.requireEmailOtp !== false;
+    if (Array.isArray(cfg.approvers) && cfg.approvers.length) {
+      emailSelect.textContent = '';
+      for (const a of cfg.approvers) {
+        const opt = document.createElement('option');
+        opt.value = a.email;
+        opt.textContent = a.name + ' (' + a.email + ')';
+        emailSelect.appendChild(opt);
+      }
+    }
+    submitLabel.textContent = requireOtp ? 'Send login code to my email' : 'Open release console';
+  }).catch(() => {});
+
+  step1.addEventListener('submit', async event => {
+    event.preventDefault(); button.disabled = true; error.textContent = '';
+    submitLabel.textContent = requireOtp ? 'Sending verification code…' : 'Opening console…';
     try {
-      const response = await fetch('/api/login', { method: 'POST', signal: AbortSignal.timeout(10000), headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: password.value }) });
-      if (!response.ok) throw new Error(response.status === 401 ? 'That password is incorrect. Please try again.' : 'Sign-in is unavailable. Please try again shortly.');
-      location.reload();
+      if (!requireOtp) {
+        const response = await fetch('/api/login', { method: 'POST', signal: AbortSignal.timeout(10000), headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: emailSelect.value, password: password.value }) });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.error || (response.status === 401 ? 'Incorrect password.' : 'Sign-in unavailable.'));
+        }
+        location.reload();
+        return;
+      }
+      const response = await fetch('/api/login/request-otp', {
+        method: 'POST', signal: AbortSignal.timeout(15000),
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: emailSelect.value, password: password.value }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Could not send verification code.');
+      challengeId = body.challengeId;
+      activeEmail = body.email;
+      otpInfo.textContent = 'We sent a 6-digit login code to ' + body.name + ' (' + body.email + '). Enter it below to verify your identity.';
+      step1.hidden = true;
+      step2.hidden = false;
+      otpInput.value = '';
+      otpInput.focus();
     } catch (reason) {
       error.textContent = reason.name === 'TypeError' || reason.name === 'TimeoutError' ? 'Unable to reach the console. Check your connection and try again.' : reason.message;
-      password.focus(); password.select(); button.disabled = false; document.getElementById('submitLabel').textContent = 'Open release console';
+      password.focus(); password.select();
+    } finally {
+      button.disabled = false;
+      submitLabel.textContent = requireOtp ? 'Send login code to my email' : 'Open release console';
     }
+  });
+
+  step2.addEventListener('submit', async event => {
+    event.preventDefault(); verifyBtn.disabled = true; error.textContent = ''; verifyLabel.textContent = 'Verifying code…';
+    try {
+      const response = await fetch('/api/login/verify-otp', {
+        method: 'POST', signal: AbortSignal.timeout(10000),
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ challengeId, email: activeEmail, code: otpInput.value.trim() }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Invalid verification code.');
+      location.reload();
+    } catch (reason) {
+      error.textContent = reason.message || 'Verification failed.';
+      otpInput.focus(); otpInput.select();
+      verifyBtn.disabled = false; verifyLabel.textContent = 'Verify & open console';
+    }
+  });
+
+  backBtn.addEventListener('click', () => {
+    step2.hidden = true; step1.hidden = false; error.textContent = ''; challengeId = '';
+    password.focus();
   });
 }
 
 const head = title => '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#152c37"><title>' + title + '</title><link rel="icon" type="image/png" href="/branding/favicon.png?v=8"><style>' + styles + '</style></head>';
 
 export const loginHtml = head('Sign in · ChessAlive Operations') + String.raw`
-<body class="login-page"><main class="login-shell"><div class="brand login-brand"><img class="brand-mark" src="/branding/chessalive-logo.png?v=8" width="38" height="38" alt="">ChessAlive</div><section class="login-card"><div class="login-route"><span class="dot" aria-hidden="true"></span>Hyderabad <span aria-hidden="true">→</span> Mumbai</div><h1>Your release command center.</h1><p class="login-copy">Build with clarity. Ship with confidence.<br>Sign in for release controls, live build metrics, and production health.</p><form id="login"><label for="password">Console password</label><input id="password" name="password" type="password" autocomplete="current-password" autofocus required placeholder="Enter your console password"><button class="primary" id="submit" type="submit"><span id="submitLabel">Open release console</span><span class="arrow" aria-hidden="true">→</span></button><p id="error" class="login-error" role="alert"></p></form></section><p class="login-foot">ChessAlive Operations · Authorized access only<br>Your session is securely managed by the build host.</p></main><script>(` + loginClient.toString() + ')();</script></body></html>';
+<body class="login-page"><main class="login-shell"><div class="brand login-brand"><img class="brand-mark" src="/branding/chessalive-logo.png?v=8" width="38" height="38" alt="">ChessAlive</div><section class="login-card"><div class="login-route"><span class="dot" aria-hidden="true"></span>3-Admin Approval Gate · Hyderabad <span aria-hidden="true">→</span> Mumbai</div><h1>Admin sign in.</h1><p class="login-copy">Moving a build from Pre-Prod to Production requires individual approval from <strong>Lakshmi, Vinoth, and Avinash</strong>. Sign in with your own email verification code.</p><form id="login"><label for="email">Select your admin account</label><select id="email" name="email" required><option value="lakshminathanlaky@gmail.com">Lakshmi (lakshminathanlaky@gmail.com)</option><option value="vinoth121022@gmail.com">Vinoth (vinoth121022@gmail.com)</option><option value="avinashr95@gmail.com">Avinash (avinashr95@gmail.com)</option></select><label for="password">Console password</label><input id="password" name="password" type="password" autocomplete="current-password" autofocus required placeholder="Enter console password"><button class="primary" id="submit" type="submit"><span id="submitLabel">Send login code to my email</span><span class="arrow" aria-hidden="true">→</span></button></form><form id="otpForm" hidden><p id="otpInfo" class="login-otp-info"></p><label for="otpCode">6-digit email verification code</label><input id="otpCode" name="otpCode" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required placeholder="000000"><button class="primary" id="verifyBtn" type="submit"><span id="verifyLabel">Verify &amp; open console</span><span class="arrow" aria-hidden="true">→</span></button><button type="button" id="backBtn" class="login-back">← Choose a different admin or resend code</button></form><p id="error" class="login-error" role="alert"></p></section><p class="login-foot">ChessAlive Operations · Individual Admin Verification<br>Each admin receives a single-use code in their own inbox.</p></main><script>(` + loginClient.toString() + ')();</script></body></html>';
 
 export const dashboardHtml = head('Release center · ChessAlive Operations') + String.raw`
-<body><header class="topbar"><div class="topbar-inner"><a class="brand" href="/" aria-label="ChessAlive release console"><img class="brand-mark" src="/branding/chessalive-logo.png?v=8" width="38" height="38" alt="">ChessAlive<span class="brand-sub">OPERATIONS</span></a><span class="nav-current">Release center</span><div class="top-right"><a id="headerPreprod" class="link" href="#" target="_blank" rel="noopener noreferrer">Open Pre-Prod<span aria-hidden="true">↗</span></a><a id="headerProduction" class="link" href="#" target="_blank" rel="noopener noreferrer">Open production<span aria-hidden="true">↗</span></a><span class="avatar" title="Operations console" aria-hidden="true">OP</span></div></div></header>
-<main class="shell"><div class="page-heading"><div><p class="breadcrumb">Operations <span>/</span> Release center</p><h1>Release command center</h1><p class="page-subtitle">Build to isolated Pre-Prod first, test everything safely, then promote to Production with one click.</p></div><div id="connection" class="connection" role="status"><span class="dot" aria-hidden="true"></span><span id="connectionLabel">Connecting to Hyderabad</span></div></div>
-<section class="hero" aria-label="Release controls"><div><p class="hero-kicker"><span class="dot" aria-hidden="true"></span>PRE-PROD TEST GATE · ZERO-DISRUPTION PROMOTION</p><div class="route"><div class="route-city">Pre-Prod<span class="route-label">Isolated admin testing (isolated DB)</span></div><div class="route-arrow" aria-hidden="true"></div><div class="route-city">Production<span class="route-label">Mumbai live slots (161.118.175.12)</span></div></div><p class="hero-copy">Every deploy ships to Pre-Prod only. Once tested, click Promote to move that exact build to Production with zero downtime.</p></div><div class="hero-action"><p id="runLabel" class="run-label mono">READY WHEN YOU ARE</p><div class="release-actions"><button id="release" class="primary" disabled><span id="releaseLabel">Build &amp; deploy to Pre-Prod</span><span class="arrow" aria-hidden="true">↗</span></button><button id="promote" class="promote-btn" title="Promote tested Pre-Prod build to Production" disabled><span id="promoteLabel">Promote to Production</span><span aria-hidden="true">↑</span></button><button id="rollback" class="secondary" title="Restore previous release" aria-describedby="rollbackNote" disabled><span id="rollbackLabel">Roll back</span><span aria-hidden="true">↶</span></button></div><p id="releaseStarted" class="hero-action-note">Deploys land on Pre-Prod first — Production stays undisturbed</p><p id="rollbackNote" class="rollback-note">Checking Pre-Prod and fallback status</p></div></section>
+<body><header class="topbar"><div class="topbar-inner"><a class="brand" href="/" aria-label="ChessAlive release console"><img class="brand-mark" src="/branding/chessalive-logo.png?v=8" width="38" height="38" alt="">ChessAlive<span class="brand-sub">OPERATIONS</span></a><span class="nav-current">Release center</span><div class="top-right"><a id="headerPreprod" class="link" href="#" target="_blank" rel="noopener noreferrer">Open Pre-Prod<span aria-hidden="true">↗</span></a><a id="headerProduction" class="link" href="#" target="_blank" rel="noopener noreferrer">Open production<span aria-hidden="true">↗</span></a><span id="userPill" class="user-pill">Signed in</span><button id="logoutBtn" class="logout-btn" type="button">Sign out</button></div></div></header>
+<main class="shell"><div class="page-heading"><div><p class="breadcrumb">Operations <span>/</span> Release center</p><h1>Release command center</h1><p class="page-subtitle">Deploy to isolated Pre-Prod first. All 3 admins (Lakshmi, Vinoth, Avinash) must individually sign in &amp; approve before promoting to Production.</p></div><div id="connection" class="connection" role="status"><span class="dot" aria-hidden="true"></span><span id="connectionLabel">Connecting to Hyderabad</span></div></div>
+<section class="hero" aria-label="Release controls"><div><p class="hero-kicker"><span class="dot" aria-hidden="true"></span>3-ADMIN APPROVAL GATE · ZERO-DISRUPTION PROMOTION</p><div class="route"><div class="route-city">Pre-Prod<span class="route-label">Isolated admin testing (isolated DB)</span></div><div class="route-arrow" aria-hidden="true"></div><div class="route-city">Production<span class="route-label">Requires 3/3 admin approvals</span></div></div><p class="hero-copy">Every deploy ships to Pre-Prod only. Lakshmi, Vinoth, and Avinash must all individually approve the tested build before Promote unlocks.</p></div><div class="hero-action"><p id="runLabel" class="run-label mono">READY WHEN YOU ARE</p><div class="release-actions"><button id="release" class="primary" disabled><span id="releaseLabel">Build &amp; deploy to Pre-Prod</span><span class="arrow" aria-hidden="true">↗</span></button><button id="approveBtn" class="approve-btn" disabled><span id="approveLabel">Approve build</span><span aria-hidden="true">✓</span></button><button id="promote" class="promote-btn" title="Requires all 3 admin approvals before promoting to Production" disabled><span id="promoteLabel">Promote to Production (0/3)</span><span aria-hidden="true">↑</span></button><button id="rollback" class="secondary" title="Restore previous release" aria-describedby="rollbackNote" disabled><span id="rollbackLabel">Roll back</span><span aria-hidden="true">↶</span></button></div><p id="releaseStarted" class="hero-action-note">Deploys land on Pre-Prod first — Production stays undisturbed</p><p id="rollbackNote" class="rollback-note">Checking Pre-Prod, 3-admin approvals, and fallback status</p></div></section>
 <div id="notice" class="notice" role="alert" hidden></div>
 <section class="metrics" aria-label="Release metrics"><div class="metric"><div class="metric-label">Total elapsed<span id="elapsedIcon" class="metric-icon" aria-hidden="true"></span></div><p id="totalTime" class="metric-value mono">0s</p><p id="totalTimeNote" class="metric-note">From start to production verification</p></div><div class="metric"><div class="metric-label">Peak build memory<span id="memoryIcon" class="metric-icon" aria-hidden="true"></span></div><p id="peakMemory" class="metric-value mono">—</p><p id="peakMemoryNote" class="metric-note">Measured during the next build</p></div><div class="metric"><div class="metric-label">Current stage<span id="stageIcon" class="metric-icon" aria-hidden="true"></span></div><p id="activeStep" class="metric-value metric-active">Ready to begin</p><p id="activeTime" class="metric-note">Waiting for the next release</p></div></section>
 <section class="infrastructure" aria-labelledby="infrastructureTitle"><div class="topology-wrap"><div class="infrastructure-heading"><div><h2>Live pods, build distribution &amp; traffic routing</h2><p>Real-time view of which build is running in each pod/slot, live traffic share, WebSockets, game rooms, and auto-scaling state.</p></div><span id="topologyRefresh" class="resource-refresh">5s pod sampling</span></div><div id="topologyGateway" class="gateway-banner"></div><div id="topologyPods" class="pod-grid"></div></div><div class="infrastructure-heading"><div><h2 id="infrastructureTitle">Infrastructure</h2><p>Observed host usage and available capacity across Hyderabad (build) and Mumbai (production).</p></div><span id="resourceRefresh" class="resource-refresh">10s sampling</span></div><div id="resourceHosts" class="resource-hosts"></div><p class="resource-thresholds"><span>Bars show observed usage</span><span><i aria-hidden="true"></i>High ≥85%</span><span class="critical"><i aria-hidden="true"></i>Attention ≥95%</span></p><div class="infrastructure-heading provider-heading"><div><h3>Cloud accounts &amp; managed database</h3><p>Two separate Oracle Cloud accounts. Provider consumption, quotas, and free-tier eligibility are distinct.</p></div><span id="providerRefresh" class="resource-refresh">5min provider sampling</span></div><div id="providerHosts" class="resource-hosts"></div></section>
 <div class="content-grid"><div class="main-column"><section class="card"><div class="card-header"><div><h2 class="card-title">Release pipeline</h2><p id="pipelineSubtitle" class="card-subtitle">Every stage, measured from start to finish</p></div><span id="releaseState" class="badge">Connecting</span></div><div class="pipeline-summary"><div class="pipeline-track" role="progressbar" aria-label="Pipeline stages complete" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"><span id="pipelineProgress" style="width:0%"></span></div><span id="pipelineCount" class="pipeline-count mono">0 / 0 complete</span></div><div class="pipeline-columns" aria-hidden="true"><span>Build stage</span><span>Elapsed</span><span>Peak RSS</span></div><ol id="timeline" class="timeline"><li class="empty" style="padding:20px 23px">Connecting to the build host…</li></ol><div class="pipeline-foot">Bars compare each step with the longest step. Pending times and unavailable memory appear as —.</div></section>
 <section class="card logs-card"><div class="card-header"><h2 class="card-title"><span class="terminal-icon" aria-hidden="true">&gt;_</span> Build output</h2><div class="log-actions"><label class="autoscroll"><input id="autoscroll" type="checkbox" checked>Auto-scroll</label><button id="downloadLog" class="small-button" disabled>Save log <span aria-hidden="true">↓</span></button></div></div><pre id="log" class="log" tabindex="0" aria-label="Recent release output">Ready. Start a release to follow the build output here.</pre><div class="logs-foot"><span id="logStatus">Output will appear when a release starts</span><span>Latest 14 KB</span></div></section></div>
 <aside class="sidebar" aria-label="Build resources and production status"><section class="card memory-card"><div class="card-header"><h2 class="card-title">Memory profile</h2><span id="memoryStatus" class="card-subtitle" style="margin:0">No live sample</span></div><div class="memory-values"><strong id="currentMemory" class="memory-current mono">—</strong><span id="memoryLabel" class="memory-unit-note">current process RSS</span></div><div id="memoryChart" class="chart-box"><div class="chart-empty">Memory history appears during a build</div></div><div class="chart-scale"><span id="chartStart">—</span><span id="chartEnd">—</span></div><div class="memory-foot">Sampled resident memory across the build process tree. Overlapping steps share the same memory scope; shared pages may be counted more than once.</div></section>
-<section class="card"><div class="card-header"><h2 class="card-title">Pre-Prod Testing</h2><span id="preprodStatus" class="badge">Waiting</span></div><div class="side-body"><a id="preprodLink" class="production-link" href="#" target="_blank" rel="noopener noreferrer"><span id="preprodHost">preprod</span><span aria-hidden="true">↗</span></a><dl class="metadata"><div class="metadata-row"><dt>Database</dt><dd class="mono">chessalive-preprod-adb (isolated)</dd></div><div class="metadata-row"><dt>Release ID</dt><dd id="preprodReleaseId" class="mono">—</dd></div><div class="metadata-row"><dt>Test version</dt><dd id="preprodVersion" class="mono">—</dd></div><div class="metadata-row"><dt>Source commit</dt><dd><a id="preprodCommit" class="mono" href="#" target="_blank" rel="noopener noreferrer">—</a></dd></div></dl><p id="preprodCommitMessage" class="commit-message">Deploy a build to Pre-Prod to start testing.</p></div></section>
+<section class="card"><div class="card-header"><h2 class="card-title">Pre-Prod Testing</h2><span id="preprodStatus" class="badge">Waiting</span></div><div class="side-body"><a id="preprodLink" class="production-link" href="#" target="_blank" rel="noopener noreferrer"><span id="preprodHost">preprod</span><span aria-hidden="true">↗</span></a><dl class="metadata"><div class="metadata-row"><dt>Database</dt><dd class="mono">chessalive-preprod-adb (isolated)</dd></div><div class="metadata-row"><dt>Release ID</dt><dd id="preprodReleaseId" class="mono">—</dd></div><div class="metadata-row"><dt>Test version</dt><dd id="preprodVersion" class="mono">—</dd></div><div class="metadata-row"><dt>Source commit</dt><dd><a id="preprodCommit" class="mono" href="#" target="_blank" rel="noopener noreferrer">—</a></dd></div></dl><p id="preprodCommitMessage" class="commit-message">Deploy a build to Pre-Prod to start testing.</p><div class="approval-gate"><div class="approval-head"><span class="approval-title">3-Admin Production Approval</span><span id="approvalBadge" class="badge">0 / 3 Approved</span></div><ul id="approvalList" class="approval-list"><li class="empty">Loading required approvers…</li></ul></div></div></section>
 <section class="card"><div class="card-header"><h2 class="card-title">Production</h2><span id="productionStatus" class="badge">Waiting</span></div><div class="side-body"><a id="productionLink" class="production-link" href="#" target="_blank" rel="noopener noreferrer"><span id="productionHost">chessalive.com</span><span aria-hidden="true">↗</span></a><dl class="metadata"><div class="metadata-row"><dt>Region</dt><dd>Mumbai (161.118.175.12)</dd></div><div class="metadata-row"><dt>Active pod</dt><dd id="activePodSlot" class="mono">—</dd></div><div class="metadata-row"><dt>Live version</dt><dd id="version" class="mono">—</dd></div><div class="metadata-row"><dt>Built at</dt><dd id="deployed">—</dd></div><div class="metadata-row"><dt>Source commit</dt><dd><a id="commit" class="mono" href="#" target="_blank" rel="noopener noreferrer">—</a></dd></div></dl><p id="commitMessage" class="commit-message">Loading source commit metadata…</p></div></section>
 <section class="card"><div class="card-header"><h2 class="card-title">Production health</h2><span id="monitorState" class="badge">Waiting</span></div><div class="side-body"><p id="monitorSummary" class="monitor-description">Waiting for the first production check.</p><div id="checks" class="checks"></div><div id="monitorTime" class="monitor-foot">Checks run every hour</div></div></section>
 <section class="card notification-card"><div class="card-header"><h2 class="card-title">Notifications</h2><span id="mailStatus" class="badge">Waiting</span></div><div class="side-body"><p class="notification-copy">Release results and production incident alerts go to your operations team.</p><ul id="admins" class="admins"></ul><p id="mailNote" class="mail-note">Checking delivery configuration…</p></div></section></aside></div>

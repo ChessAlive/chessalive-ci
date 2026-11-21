@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Production host installer. Control sockets and snapshots never leave this host."""
 import argparse
+import base64
+from datetime import datetime, timezone
 import fcntl
+import hashlib
+import hmac
 import http.client
 import json
 import os
@@ -1106,10 +1110,70 @@ def recover_interrupted(platform):
     handoff.recover(current, candidate)
 
 
+REQUIRED_PROMOTE_APPROVERS = ("avinash", "lakshmi", "vinoth")
+
+
+def verify_promote_approval(release_id, proof_b64, key_file=None, required_ids=REQUIRED_PROMOTE_APPROVERS, max_age_seconds=300, now=None):
+    """Enforce host-side 3-admin cryptographic approval proof before promoting Pre-Prod to Production."""
+    if not proof_b64 or not isinstance(proof_b64, str):
+        raise RuntimeError("Promotion blocked: all 3 required admins (Lakshmi, Vinoth, Avinash) must approve this release")
+    try:
+        payload = json.loads(base64.b64decode(proof_b64.strip()).decode("utf-8"))
+    except Exception as exc:
+        raise RuntimeError("Promotion blocked: invalid approval proof encoding") from exc
+    if not isinstance(payload, dict) or payload.get("schemaVersion") != 1:
+        raise RuntimeError("Promotion blocked: unsupported approval proof schema")
+    if payload.get("releaseId") != release_id:
+        raise RuntimeError("Promotion blocked: approval proof does not match the Pre-Prod release ID")
+    issued_raw = str(payload.get("issuedAt") or "")
+    try:
+        issued_at = datetime.fromisoformat(issued_raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise RuntimeError("Promotion blocked: invalid approval proof timestamp") from exc
+    current_time = now if now is not None else datetime.now(timezone.utc)
+    if abs((current_time - issued_at).total_seconds()) > max_age_seconds:
+        raise RuntimeError("Promotion blocked: approval proof expired; re-click Promote from the Release Console")
+    approvers = payload.get("approvers")
+    if not isinstance(approvers, list):
+        raise RuntimeError("Promotion blocked: missing approver list")
+    seen_ids = {}
+    canonical_items = []
+    for item in approvers:
+        if not isinstance(item, dict):
+            raise RuntimeError("Promotion blocked: invalid approver entry")
+        aid = str(item.get("id") or "").strip().lower()
+        email = str(item.get("email") or "").strip().lower()
+        approved_at = str(item.get("approvedAt") or "").strip()
+        if not aid or "@" not in email or not approved_at:
+            raise RuntimeError("Promotion blocked: incomplete approver record")
+        if aid in seen_ids:
+            raise RuntimeError("Promotion blocked: duplicate approver entry")
+        seen_ids[aid] = email
+        canonical_items.append(f"{aid}:{email}:{approved_at}")
+    missing = [aid for aid in required_ids if aid not in seen_ids]
+    if missing:
+        raise RuntimeError("Promotion blocked: missing approvals from " + ", ".join(missing))
+    key_path = Path(key_file) if key_file is not None else Path(os.environ.get("CHESSALIVE_APPROVAL_SECRET_FILE") or (CONFIG / "promote-approval.key"))
+    if not key_path.is_file():
+        raise RuntimeError("Promotion blocked: host approval signing key is not provisioned")
+    secret = key_path.read_text(encoding="utf-8").strip()
+    if len(secret) < 32:
+        raise RuntimeError("Promotion blocked: host approval signing key is too short")
+    sig = str(payload.get("signature") or "").strip().lower()
+    canonical_items.sort()
+    commit_hash = str(payload.get("commitHash") or "")
+    message = f"v1|{release_id}|{commit_hash}|{issued_raw}|" + "|".join(canonical_items)
+    expected = hmac.new(secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        raise RuntimeError("Promotion blocked: approval proof signature verification failed")
+    return sorted(seen_ids.keys())
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=("status", "deploy", "preprod", "promote", "rollback", "recover"))
     parser.add_argument("--stage", type=Path)
+    parser.add_argument("--approval-proof", default=None)
     args = parser.parse_args()
     platform = Platform()
     if args.mode == "status" and not platform.releases.exists():
@@ -1176,6 +1240,8 @@ def main():
             raise RuntimeError("The current pre-prod release is already live in production")
         if current.get("protocol") != 1:
             raise RuntimeError("Legacy deployment must complete its initial migration first")
+        proof_b64 = args.approval_proof or os.environ.get("CHESSALIVE_APPROVAL_PROOF", "")
+        verify_promote_approval(preprod["id"], proof_b64)
         mark("promote_verify", "running")
         release_dir = platform.release_dir(preprod)
         verify(release_dir)

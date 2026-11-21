@@ -82,4 +82,5 @@ args=("${MODE}")
 exec systemd-run --quiet --wait --pipe --collect --unit=chessalive-release-operation \
   --property=TimeoutStartSec=infinity \
   --setenv="CHESSALIVE_PROGRESS=${CHESSALIVE_PROGRESS:-}" \
+  --setenv="CHESSALIVE_APPROVAL_PROOF=${CHESSALIVE_APPROVAL_PROOF:-}" \
   python3 "${TOOLS}/runtime_transaction.py" "${args[@]}"

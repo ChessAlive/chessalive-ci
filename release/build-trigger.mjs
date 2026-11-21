@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { createResourceMonitor } from "./resource-monitor.mjs";
 import { dashboardHtml, loginHtml } from "./dashboard.mjs";
 import { stepTemplate, emptyMetrics, elapsedMs, applyStepEvent, createLineDecoder, parseStepEvent, sampleProcessMemory, recordMemory, finishSteps } from "./build-metrics.mjs";
+import { createApprovalManager, parseApproversConfig } from "./approvals.mjs";
 
 import { createMonitorIssueReport, MONITOR_INTERVAL_MS, nextMonitorIncidentState } from "./monitor-policy.mjs";
 
@@ -39,10 +40,28 @@ const admins = (process.env.BUILD_ADMIN_EMAILS || [
   "vinoth121022@gmail.com",
   "avinashr95@gmail.com",
 ].join(",")).split(",").map(value => value.trim()).filter(Boolean);
-const smtpUrl = process.env.BUILD_SMTP_URL || "";
-const smtpFrom = process.env.BUILD_SMTP_FROM || "ChessAlive Releases <no-reply@chessalive.com>";
-const resendApiKey = process.env.CHESSALIVE_RESEND_API_KEY || "";
-const resendFrom = process.env.CHESSALIVE_OTP_FROM || smtpFrom;
+const stripQuotes = value => String(value ?? "").trim().replace(/^["']|["']$/g, "").trim();
+const smtpUrl = stripQuotes(process.env.BUILD_SMTP_URL);
+const smtpFrom = stripQuotes(process.env.BUILD_SMTP_FROM) || "ChessAlive Releases <no-reply@chessalive.com>";
+const resendApiKey = stripQuotes(process.env.CHESSALIVE_RESEND_API_KEY);
+const resendFrom = stripQuotes(process.env.CHESSALIVE_OTP_FROM) || smtpFrom;
+const resendApiUrl = stripQuotes(process.env.RESEND_API_URL) || "https://api.resend.com/emails";
+const requireEmailOtp = process.env.BUILD_REQUIRE_EMAIL_OTP === "no"
+  ? false
+  : (process.env.BUILD_REQUIRE_EMAIL_OTP === "yes" || Boolean(resendApiKey || (smtpUrl && nodemailer)));
+const requiredApprovers = parseApproversConfig(process.env.PROMOTE_APPROVERS);
+const approvalStateFile = process.env.PROMOTE_APPROVAL_STATE_FILE || resolve(root, ".state/promote-approvals.json");
+const approvalSecretFile = process.env.PROMOTE_APPROVAL_SECRET_FILE || "/etc/chessalive/promote-approval.key";
+function loadApprovalSecret() {
+  const fromEnv = stripQuotes(process.env.PROMOTE_APPROVAL_SECRET);
+  if (fromEnv.length >= 32) return fromEnv;
+  try {
+    const fromFile = readFileSync(approvalSecretFile, "utf8").trim();
+    if (fromFile.length >= 32) return fromFile;
+  } catch { /* fail closed when promote is attempted */ }
+  return "";
+}
+const approvals = createApprovalManager({ stateFile: approvalStateFile, approvers: requiredApprovers });
 const monitorPaths = (process.env.MONITOR_PATHS || "/,/health,/version,/play,/tactics,/coach")
   .split(",").map(value => value.trim()).filter(Boolean);
 const maxLogBytes = 120_000;
@@ -143,21 +162,36 @@ function cookies(request) {
   }).filter(([key]) => key));
 }
 
-function authorized(request) {
-  if (!basicPassword) return false;
+function getSession(request) {
+  if (!basicPassword) return null;
   const token = cookies(request)[sessionCookie];
-  const issuedAt = token ? sessions.get(token) : undefined;
-  if (!issuedAt) return false;
-  if (Date.now() - issuedAt > sessionTtlMs) { sessions.delete(token); return false; }
-  sessions.set(token, Date.now());
-  return true;
+  const entry = token ? sessions.get(token) : undefined;
+  if (!entry) return null;
+  const issuedAt = typeof entry === "number" ? entry : entry.issuedAt;
+  if (Date.now() - issuedAt > sessionTtlMs) { sessions.delete(token); return null; }
+  const updated = typeof entry === "number" ? { issuedAt: Date.now(), admin: null, otpVerified: false } : { ...entry, issuedAt: Date.now() };
+  sessions.set(token, updated);
+  return { token, ...updated };
+}
+
+function authorized(request) {
+  return Boolean(getSession(request));
 }
 
 function requireAuth(request, response) {
-  if (authorized(request)) return true;
+  const session = getSession(request);
+  if (session) return session;
   response.writeHead(401, { "Cache-Control": "no-store", "Content-Type": "application/json; charset=utf-8" });
   response.end(JSON.stringify({ error: "Authentication required" }));
-  return false;
+  return null;
+}
+
+function clientAddress(request) {
+  const cf = String(request.headers["cf-connecting-ip"] || "").trim();
+  if (cf) return cf;
+  const xff = String(request.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  if (xff) return xff;
+  return request.socket?.remoteAddress || "unknown";
 }
 
 function readBody(request) {
@@ -207,13 +241,18 @@ function updateStepFromLine(line) {
   if (event && applyStepEvent(state.release.steps, event)) persistRelease();
 }
 
-function publicState() {
+function publicState(session = null) {
   const production = state.monitor.production || {};
   const deployedCommit = rollback.current ? (rollback.current.commitHash || 'unknown') : (state.release.kind === 'rollback' ? 'unknown' : commitHash);
   const pp = rollback.preprod || {};
   const ppCommit = pp.commitHash || 'unknown';
+  const approvalStatus = approvals.getStatus(pp.releaseId);
+  const artifactPromotable = Boolean(pp.promotable);
+  const fullyPromotable = Boolean(artifactPromotable && approvalStatus.allApproved);
   return {
     serverTime: new Date().toISOString(),
+    currentUser: session?.admin ? { ...session.admin, otpVerified: Boolean(session.otpVerified) } : null,
+    requireEmailOtp,
     resources: resources.publicState(),
     rollback,
     preprod: {
@@ -224,9 +263,15 @@ function publicState() {
       healthy: Boolean(pp.healthy),
       systemdState: pp.systemdState || 'inactive',
       complete: Boolean(pp.complete),
-      promotable: Boolean(pp.promotable),
+      artifactPromotable,
+      promotable: fullyPromotable,
       inSyncWithProd: Boolean(pp.inSyncWithProd),
-      reason: pp.reason || 'no_preprod_release',
+      reason: !artifactPromotable
+        ? (pp.reason || 'no_preprod_release')
+        : approvalStatus.allApproved
+          ? 'ready_to_promote'
+          : 'awaiting_approvals',
+      approvals: approvalStatus,
       commitHash: ppCommit,
       commitMessage: pp.commitMessage || (pp.releaseId ? 'Staged pre-prod release' : 'No pre-prod build deployed yet'),
       commitDate: pp.commitDate || null,
@@ -273,6 +318,28 @@ function releaseCommitSummary() {
   return `Commit ${commitHash} — ${commitMessage}${commitDate ? ` (${commitDate})` : ""}.`;
 }
 
+async function sendOtpEmail(approver, code) {
+  const subject = `ChessAlive Release Console sign-in code: ${code}`;
+  const html = `<!doctype html><html><body style="margin:0;background:#08111f;font-family:Arial,sans-serif;color:#eaf1ff"><div style="max-width:540px;margin:24px auto;padding:30px;background:#111e33;border:1px solid #29415f;border-radius:16px"><div style="font-size:12px;letter-spacing:2px;color:#6ea8ff">CHESSALIVE RELEASE CONSOLE</div><h1 style="margin:14px 0 8px;color:#fff;font-size:22px">Hi ${escapeHtml(approver.name)}, here is your sign-in code</h1><p style="color:#b8c9e5;line-height:1.6">Use this 6-digit one-time code to verify your admin identity and approve Pre-Prod → Production releases. It expires in 10 minutes.</p><div style="margin:22px 0;padding:18px;border-radius:10px;background:#0b1627;border:1px solid #2a4668;text-align:center;font-size:34px;font-weight:700;letter-spacing:8px;color:#c8f1db;font-family:monospace">${escapeHtml(code)}</div><p style="color:#8da6c8;font-size:12px;line-height:1.6">Never share this code with anyone. All 3 required admins (Lakshmi, Vinoth, Avinash) must verify individually before any build moves to Production.</p></div></body></html>`;
+  const text = `Hi ${approver.name},\n\nYour ChessAlive Release Console sign-in code is: ${code}\n\nIt expires in 10 minutes. Never share this code.`;
+  if (resendApiKey) {
+    const response = await fetch(resendApiUrl, {
+      method: "POST",
+      signal: AbortSignal.timeout(10_000),
+      headers: { Authorization: `Bearer ${resendApiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: resendFrom, to: [approver.email], subject, html, text }),
+    });
+    if (!response.ok) throw new Error(`Email delivery failed (Resend ${response.status})`);
+    return true;
+  }
+  if (smtpUrl && nodemailer) {
+    const transporter = nodemailer.createTransport(smtpUrl);
+    await transporter.sendMail({ from: smtpFrom, to: approver.email, subject, text, html });
+    return true;
+  }
+  throw new Error("No email provider is configured to deliver admin verification codes.");
+}
+
 async function sendAdminEmail(subject, title, summary, extraHtml = "") {
   try {
     const safeTitle = escapeHtml(title);
@@ -280,7 +347,7 @@ async function sendAdminEmail(subject, title, summary, extraHtml = "") {
     const html = `<!doctype html><html><body style="margin:0;background:#08111f;font-family:Arial,sans-serif;color:#eaf1ff"><div style="max-width:680px;margin:24px auto;padding:30px;background:#111e33;border:1px solid #29415f;border-radius:18px"><div style="font-size:13px;letter-spacing:2px;color:#6ea8ff">CHESSALIVE RELEASE CONSOLE</div><h1 style="margin:14px 0 8px;color:#fff">${safeTitle}</h1><p style="color:#b8c9e5;line-height:1.6">${safeSummary}</p><ul style="padding-left:20px;line-height:1.9">${extraHtml || releaseStepsHtml()}</ul><p style="margin-top:24px"><a href="${escapeHtml(productionUrl)}" style="color:#8cc2ff">Open production</a></p></div></body></html>`;
     const text = `${title}\n\n${summary}\n\n${productionUrl}`;
     if (resendApiKey) {
-      const response = await fetch("https://api.resend.com/emails", {
+      const response = await fetch(resendApiUrl, {
         method: "POST",
         signal: AbortSignal.timeout(10_000),
         headers: { Authorization: `Bearer ${resendApiKey}`, "Content-Type": "application/json" },
@@ -299,23 +366,26 @@ async function sendAdminEmail(subject, title, summary, extraHtml = "") {
   } catch (error) { appendLog(`[notify] Admin email failed: ${error.message}\n`); return false; }
 }
 
-function startBuild(kind = 'build') {
+function startBuild(kind = 'build', options = {}) {
   if (state.release.child) return false;
   refreshCommitMetadata();
   const isRollback = kind === 'rollback';
   const isPromote = kind === 'promote';
   const targetEnv = defaultDeployTarget;
   const script = isRollback ? './release/rollback-chessd.sh' : isPromote ? './release/promote-chessd.sh' : './release/local-release.sh';
+  const actorLine = options.actor ? `Triggered by ${options.actor.name} (${options.actor.email})\n` : '';
+  const approvalLine = isPromote && options.approversSummary ? `Verified 3/3 admin approvals: ${options.approversSummary}\n` : '';
   const initialLog = isRollback
-    ? `Restoring the previous retained release on Mumbai\n`
+    ? `${actorLine}Restoring the previous retained release on Mumbai\n`
     : isPromote
-      ? `Promoting verified Pre-Prod release to Mumbai production (zero-disruption handoff)\n`
-      : `Starting full release #${state.release.runId + 1} from ${sourceDir} (target: ${targetEnv})\n`;
+      ? `${actorLine}${approvalLine}Promoting verified Pre-Prod release to Mumbai production (zero-disruption handoff)\n`
+      : `${actorLine}Starting full release #${state.release.runId + 1} from ${sourceDir} (target: ${targetEnv})\n`;
   state.release = { kind, status: 'running', runId: state.release.runId + 1, startedAt: new Date().toISOString(), finishedAt: null, exitCode: null, log: initialLog, steps: isRollback ? rollbackSteps() : isPromote ? promoteSteps() : stepTemplate(), metrics: emptyMetrics(), child: null };
+  const extraEnv = isPromote && options.approvalProof ? { CHESSALIVE_APPROVAL_PROOF: options.approvalProof } : {};
   const child = spawn("bash", [script], {
     cwd: root,
     detached: true,
-    env: { ...process.env, CHESSALIVE_PROGRESS: "yes", SOURCE_DIR: sourceDir, SOURCE_ROOT: sourceDir, CI_ROOT: root, LOCAL_DEPLOY: (isRollback || isPromote) ? 'no' : 'yes', PUBLIC_URL: productionUrl, PREPROD_URL: preprodUrl, DEPLOY_TARGET: targetEnv, SKIP_INSTALL: "no", SKIP_TESTS: "no", SKIP_FULL_TESTS: process.env.BUILD_SKIP_FULL_TESTS || "no", SKIP_WEB_SETUP: "yes", SKIP_BUDGETS: process.env.BUILD_SKIP_BUDGETS || "no", SKIP_ASSETS: "yes", SKIP_CONTENT: (isRollback || isPromote) ? "yes" : "no", SKIP_DEPLOY: "no" },
+    env: { ...process.env, ...extraEnv, CHESSALIVE_PROGRESS: "yes", SOURCE_DIR: sourceDir, SOURCE_ROOT: sourceDir, CI_ROOT: root, LOCAL_DEPLOY: (isRollback || isPromote) ? 'no' : 'yes', PUBLIC_URL: productionUrl, PREPROD_URL: preprodUrl, DEPLOY_TARGET: targetEnv, SKIP_INSTALL: "no", SKIP_TESTS: "no", SKIP_FULL_TESTS: process.env.BUILD_SKIP_FULL_TESTS || "no", SKIP_WEB_SETUP: "yes", SKIP_BUDGETS: process.env.BUILD_SKIP_BUDGETS || "no", SKIP_ASSETS: "yes", SKIP_CONTENT: (isRollback || isPromote) ? "yes" : "no", SKIP_DEPLOY: "no" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   state.release.child = child;
@@ -432,45 +502,160 @@ const server = createServer(async (request, response) => {
     return response.end(branding.get(url.pathname));
   }
   if (url.pathname === "/health" && request.method === "GET") return sendJson(response, 200, { ok: true, build: state.release.status, monitor: state.monitor.level });
+  if (url.pathname === "/api/login/config" && request.method === "GET") {
+    return sendJson(response, 200, {
+      requireEmailOtp,
+      approvers: requiredApprovers.map(a => ({ id: a.id, name: a.name, email: a.email })),
+    });
+  }
+  if (url.pathname === "/api/login/request-otp" && request.method === "POST") {
+    try {
+      const body = JSON.parse(await readBody(request));
+      if (!basicPassword || typeof body.password !== "string" || !safeEqual(body.password, basicPassword)) {
+        return sendJson(response, 401, { error: "Incorrect console password" });
+      }
+      const issued = approvals.issueOtp(body.email, clientAddress(request));
+      if (!issued.ok) return sendJson(response, issued.status, { error: issued.error });
+      await sendOtpEmail(issued.approver, issued.code);
+      return sendJson(response, 200, {
+        challengeId: issued.challengeId,
+        name: issued.approver.name,
+        email: issued.approver.email,
+        expiresAt: issued.expiresAt,
+      });
+    } catch (error) {
+      return sendJson(response, 400, { error: error.message === "request too large" ? error.message : (error.message || "Unable to send verification code") });
+    }
+  }
+  if (url.pathname === "/api/login/verify-otp" && request.method === "POST") {
+    try {
+      const body = JSON.parse(await readBody(request));
+      const verified = approvals.verifyOtp(body.challengeId, body.email, body.code);
+      if (!verified.ok) return sendJson(response, verified.status, { error: verified.error });
+      const token = randomBytes(32).toString("hex");
+      const admin = { id: verified.approver.id, name: verified.approver.name, email: verified.approver.email };
+      sessions.set(token, { issuedAt: Date.now(), admin, otpVerified: true });
+      response.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Set-Cookie": `${sessionCookie}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${sessionTtlMs / 1000}`,
+        "Cache-Control": "no-store",
+      });
+      return response.end(JSON.stringify({ ok: true, admin }));
+    } catch (error) {
+      return sendJson(response, 400, { error: error.message === "request too large" ? error.message : "Invalid verification request" });
+    }
+  }
   if (url.pathname === "/api/login" && request.method === "POST") {
+    if (requireEmailOtp) {
+      return sendJson(response, 400, { error: "Individual admin email OTP verification is required. Select your admin account to receive a 6-digit login code." });
+    }
     try {
       const body = JSON.parse(await readBody(request));
       if (!basicPassword || typeof body.password !== "string" || !safeEqual(body.password, basicPassword))
         return sendJson(response, 401, { error: "Incorrect password" });
       const token = randomBytes(32).toString("hex");
-      sessions.set(token, Date.now());
+      const resolved = body.email ? approvals.resolveApprover(body.email) : null;
+      sessions.set(token, {
+        issuedAt: Date.now(),
+        admin: resolved ? { id: resolved.id, name: resolved.name, email: resolved.email } : null,
+        otpVerified: false,
+      });
       response.writeHead(204, { "Set-Cookie": `${sessionCookie}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${sessionTtlMs / 1000}`, "Cache-Control": "no-store" });
       return response.end();
     } catch (error) {
       return sendJson(response, 400, { error: error.message === "request too large" ? error.message : "Invalid request" });
     }
   }
+  if (url.pathname === "/api/logout" && request.method === "POST") {
+    const token = cookies(request)[sessionCookie];
+    if (token) sessions.delete(token);
+    response.writeHead(204, {
+      "Set-Cookie": `${sessionCookie}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`,
+      "Cache-Control": "no-store",
+    });
+    return response.end();
+  }
   if (url.pathname === "/" && request.method === "GET" && !authorized(request)) {
     response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
     return response.end(loginHtml);
   }
-  if (!requireAuth(request, response)) return;
+  const session = requireAuth(request, response);
+  if (!session) return;
   if (url.pathname === "/" && request.method === "GET") { response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }); return response.end(dashboardHtml); }
-  if (url.pathname === "/api/status" && request.method === "GET") return sendJson(response, 200, publicState());
-  if (url.pathname === "/api/build" && request.method === "POST") { if (!startBuild()) return sendJson(response, 409, { error: "a release is already running", ...publicState() }); return sendJson(response, 202, publicState()); }
-  if (url.pathname === '/api/promote' && request.method === 'POST') {
-    if (state.release.child) return sendJson(response, 409, { error: 'a release is already running', ...publicState() });
+  if (url.pathname === "/api/status" && request.method === "GET") return sendJson(response, 200, publicState(session));
+  if (url.pathname === "/api/build" && request.method === "POST") { if (!startBuild('build', { actor: session.admin })) return sendJson(response, 409, { error: "a release is already running", ...publicState(session) }); return sendJson(response, 202, publicState(session)); }
+  if (url.pathname === "/api/promote/approve" && request.method === "POST") {
+    if (!session.admin?.id || !session.otpVerified) {
+      return sendJson(response, 403, { error: "Sign in individually with your personal admin email verification code to approve a build.", ...publicState(session) });
+    }
+    if (state.release.child) return sendJson(response, 409, { error: "a release is already running", ...publicState(session) });
     await refreshRollback();
-    if (!rollback.preprod?.promotable) {
-      const reason = rollback.preprod?.reason === 'already_live'
+    const pp = rollback.preprod;
+    if (!pp?.promotable || !pp.releaseId) {
+      const reason = pp?.reason === "already_live"
+        ? "This Pre-Prod build is already live in production."
+        : "No verified Pre-Prod build is waiting for approval.";
+      return sendJson(response, 409, { error: reason, ...publicState(session) });
+    }
+    const updated = approvals.approve(pp.releaseId, session.admin, { commitHash: pp.commitHash, version: pp.version });
+    const pendingNames = updated.pending.map(p => p.name).join(", ");
+    const summary = updated.allApproved
+      ? `${session.admin.name} approved Pre-Prod release ${pp.releaseId} (${updated.approvedCount}/${updated.requiredCount}). All 3 required admins (Lakshmi, Vinoth, Avinash) have approved — Ready to Promote to Production!`
+      : `${session.admin.name} approved Pre-Prod release ${pp.releaseId} (${updated.approvedCount}/${updated.requiredCount}). Still waiting for: ${pendingNames}.`;
+    void sendAdminEmail(
+      updated.allApproved ? `ChessAlive Pre-Prod APPROVED (3/3) — Ready to Promote` : `ChessAlive Pre-Prod approval ${updated.approvedCount}/${updated.requiredCount} (${session.admin.name})`,
+      updated.allApproved ? "All 3 admins approved Pre-Prod" : `Approval ${updated.approvedCount} of ${updated.requiredCount} recorded`,
+      `${summary}\nPre-Prod URL: ${preprodUrl}`
+    );
+    return sendJson(response, 200, publicState(session));
+  }
+  if (url.pathname === "/api/promote/revoke" && request.method === "POST") {
+    if (!session.admin?.id || !session.otpVerified) {
+      return sendJson(response, 403, { error: "Individual admin email sign-in is required.", ...publicState(session) });
+    }
+    await refreshRollback();
+    const pp = rollback.preprod;
+    if (pp?.releaseId) {
+      approvals.revoke(pp.releaseId, session.admin);
+    }
+    return sendJson(response, 200, publicState(session));
+  }
+  if (url.pathname === '/api/promote' && request.method === 'POST') {
+    if (!session.admin?.id || !session.otpVerified) {
+      return sendJson(response, 403, { error: 'Individual admin email sign-in is required to promote to production.', ...publicState(session) });
+    }
+    if (state.release.child) return sendJson(response, 409, { error: 'a release is already running', ...publicState(session) });
+    await refreshRollback();
+    const pp = rollback.preprod;
+    if (!pp?.promotable || !pp.releaseId) {
+      const reason = pp?.reason === 'already_live'
         ? 'The Pre-Prod build is already live in production'
         : 'No verified Pre-Prod build is ready to promote';
-      return sendJson(response, 409, { error: reason, ...publicState() });
+      return sendJson(response, 409, { error: reason, ...publicState(session) });
     }
-    if (!startBuild('promote')) return sendJson(response, 409, { error: 'a release is already running', ...publicState() });
-    return sendJson(response, 202, publicState());
+    const approvalStatus = approvals.getStatus(pp.releaseId);
+    if (!approvalStatus.allApproved) {
+      const missingNames = approvalStatus.pending.map(p => p.name).join(', ');
+      return sendJson(response, 403, {
+        error: `All 3 admins (Lakshmi, Vinoth, Avinash) must approve ${pp.releaseId} before promoting to production (${approvalStatus.approvedCount}/${approvalStatus.requiredCount} approved; pending: ${missingNames}).`,
+        ...publicState(session),
+      });
+    }
+    const secret = loadApprovalSecret();
+    if (!secret) {
+      return sendJson(response, 500, { error: 'Approval signing key is not configured on the build host.', ...publicState(session) });
+    }
+    const approvalProof = approvals.buildSignedProof(pp.releaseId, secret, { commitHash: pp.commitHash });
+    const approversSummary = approvalStatus.approvedBy.map(a => `${a.name} (${a.email})`).join(', ');
+    if (!startBuild('promote', { actor: session.admin, approvalProof, approversSummary })) return sendJson(response, 409, { error: 'a release is already running', ...publicState(session) });
+    return sendJson(response, 202, publicState(session));
   }
   if (url.pathname === '/api/rollback' && request.method === 'POST') {
-    if (state.release.child) return sendJson(response, 409, { error: 'a release is already running', ...publicState() });
+    if (state.release.child) return sendJson(response, 409, { error: 'a release is already running', ...publicState(session) });
     await refreshRollback();
-    if (!rollback.available) return sendJson(response, 409, { error: rollback.reason || 'No complete previous release is available', ...publicState() });
-    if (!startBuild('rollback')) return sendJson(response, 409, { error: 'a release is already running', ...publicState() });
-    return sendJson(response, 202, publicState());
+    if (!rollback.available) return sendJson(response, 409, { error: rollback.reason || 'No complete previous release is available', ...publicState(session) });
+    if (!startBuild('rollback', { actor: session.admin })) return sendJson(response, 409, { error: 'a release is already running', ...publicState(session) });
+    return sendJson(response, 202, publicState(session));
   }
   sendJson(response, 404, { error: "not found" });
 });

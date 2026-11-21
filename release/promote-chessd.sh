@@ -21,8 +21,9 @@ remote() {
   if [[ "${LOCAL_DEPLOY}" == yes ]]; then bash -c "$1";
   else ssh "${SSH_OPTS[@]}" "${OCI_USER}@${OCI_HOST}" "$1"; fi
 }
-printf -v remote_command 'sudo -n env MODE=promote REMOTE_ROOT=%q SERVICE=%q HEALTH_URL=%q HEALTH_RETRIES=%q HEALTH_INTERVAL=%q CHESSALIVE_PROGRESS=%q bash -s' \
-  "${REMOTE_ROOT}" "${SERVICE}" "${HEALTH_URL}" "${HEALTH_RETRIES}" "${HEALTH_INTERVAL}" "${CHESSALIVE_PROGRESS:-}"
+[[ -n "${CHESSALIVE_APPROVAL_PROOF:-}" ]] || { echo 'Promotion blocked: missing 3-admin approval proof (CHESSALIVE_APPROVAL_PROOF)' >&2; exit 64; }
+printf -v remote_command 'sudo -n env MODE=promote REMOTE_ROOT=%q SERVICE=%q HEALTH_URL=%q HEALTH_INTERVAL=%q HEALTH_RETRIES=%q CHESSALIVE_PROGRESS=%q CHESSALIVE_APPROVAL_PROOF=%q bash -s' \
+  "${REMOTE_ROOT}" "${SERVICE}" "${HEALTH_URL}" "${HEALTH_INTERVAL}" "${HEALTH_RETRIES}" "${CHESSALIVE_PROGRESS:-}" "${CHESSALIVE_APPROVAL_PROOF}"
 source "${CI_ROOT}/release/progress.sh"
 PROMOTE_PROGRESS_LOG="$(mktemp "${TMPDIR:-/tmp}/chessalive-promote-progress.XXXXXX")"
 promote_exit() {

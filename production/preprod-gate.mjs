@@ -199,7 +199,7 @@ button:hover{background:#006854}
     <button type="submit">Enter Pre-Prod →</button>
     ${errorMessage ? `<p class="err" role="alert">${escapeHtml(errorMessage)}</p>` : ""}
   </form>
-  <div class="foot">When testing passes, promote this exact build to production from the Release Command Center with one click.</div>
+  <div class="foot">When testing passes, <strong>all 3 admins (Lakshmi, Vinoth, Avinash)</strong> must individually sign in with their email verification code in the <a href="http://129.225.116.198:8787" target="_blank" rel="noopener noreferrer" style="color:#007e66;font-weight:650">Release Command Center</a> to approve promoting this build to Production.</div>
 </main>
 </body>
 </html>`;
