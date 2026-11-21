@@ -1,5 +1,5 @@
 [Unit]
-Description=ChessAlive pre-production testing server (isolated)
+Description=ChessAlive pre-production testing server (shared prod DB, isolated build & cgroup)
 After=network-online.target
 Wants=network-online.target
 
@@ -19,7 +19,7 @@ Restart=on-failure
 RestartSec=3
 TimeoutStopSec=30
 KillMode=mixed
-# Strictly isolated from live production: lower CPU/IO priority and bounded RAM.
+# Strictly isolated process/cgroup from live production: lower CPU/IO priority and bounded RAM.
 CPUWeight=10
 CPUQuota=60%
 IOWeight=10
@@ -31,7 +31,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/chessalive-preprod/data
+ReadWritePaths=/opt/chessalive/data/uploads /opt/chessalive-preprod/data
 LimitNOFILE=65535
 
 [Install]

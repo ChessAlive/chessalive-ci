@@ -189,7 +189,7 @@ button:hover{background:#006854}
 <main>
   <span class="pill"><span class="dot"></span>Pre-Prod Testing Environment</span>
   <h1>ChessAlive Pre-Prod</h1>
-  <p>Isolated testing build backed by a separate staging database. Production (<strong>chessalive.com</strong>) is completely untouched. Sign in with your admin email and operations/release password.</p>
+  <p>Pre-Prod runs the new test build directly against the shared live database (<strong>chessalive-adb</strong>) while keeping production traffic (<strong>chessalive.com</strong>) undisturbed. Sign in below to enter, then log in with your real ChessAlive email to see your live profile and play.</p>
   <form method="POST" action="/_preprod/login">
     <input type="hidden" name="next" value="${escapeHtml(safeNextPath(nextPath))}">
     <label for="email">Admin email</label>
