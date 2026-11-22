@@ -102,6 +102,20 @@ if [[ "${DELEGATED_PRODUCTION_BUILD:-no}" == yes && "${DELEGATED_SCOPE_ACTIVE:-n
   fi
 fi
 
+# Serialize concurrent release builds sharing the same SOURCE_DIR so overlapping
+# triggers (dashboard + SSH/automation) never wipe dist/ out from under an active build.
+if command -v flock >/dev/null 2>&1; then
+  RELEASE_LOCK_FILE="${RELEASE_LOCK_FILE:-${TMPDIR:-/tmp}/chessalive-local-release-$(id -u).lock}"
+  exec 9>"${RELEASE_LOCK_FILE}"
+  if ! flock -n 9; then
+    echo "Another release build is active; waiting for lock (${RELEASE_LOCK_FILE})..."
+    flock -w "${RELEASE_LOCK_WAIT_SECONDS:-2400}" 9 || {
+      echo "Timed out waiting for active release build lock (${RELEASE_LOCK_FILE})" >&2
+      exit 1
+    }
+  fi
+fi
+
 trap 'progress_on_exit "$?"' EXIT
 progress_mark prepare running
 SOURCE_DIR="${SOURCE_DIR:-/opt/chessalive}"
