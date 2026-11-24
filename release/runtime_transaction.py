@@ -1110,21 +1110,38 @@ def recover_interrupted(platform):
     handoff.recover(current, candidate)
 
 
-REQUIRED_PROMOTE_APPROVERS = ("avinash", "lakshmi", "vinoth")
+AUTHORIZED_PROMOTE_APPROVERS = ("avinash", "lakshmi", "vinoth")
+REQUIRED_PROMOTE_APPROVERS = AUTHORIZED_PROMOTE_APPROVERS
+REQUIRED_PROMOTE_QUORUM = 2
+VETO_OVERRIDE_APPROVERS = ("lakshmi",)
 
 
-def verify_promote_approval(release_id, proof_b64, key_file=None, required_ids=REQUIRED_PROMOTE_APPROVERS, max_age_seconds=300, now=None):
-    """Enforce host-side 3-admin cryptographic approval proof before promoting Pre-Prod to Production."""
+def verify_promote_approval(
+    release_id,
+    proof_b64,
+    key_file=None,
+    allowed_ids=AUTHORIZED_PROMOTE_APPROVERS,
+    min_approvals=REQUIRED_PROMOTE_QUORUM,
+    veto_override_ids=VETO_OVERRIDE_APPROVERS,
+    max_age_seconds=300,
+    now=None,
+):
+    """Enforce host-side 2-of-3 admin quorum or Lakshmi override cryptographic proof before promoting Pre-Prod to Production."""
     if not proof_b64 or not isinstance(proof_b64, str):
-        raise RuntimeError("Promotion blocked: all 3 required admins (Lakshmi, Vinoth, Avinash) must approve this release")
+        raise RuntimeError(
+            "Promotion blocked: at least 2 of 3 authorized admins (Lakshmi, Vinoth, Avinash) "
+            "must approve this release, or Lakshmi must authorize a release override"
+        )
     try:
         payload = json.loads(base64.b64decode(proof_b64.strip()).decode("utf-8"))
     except Exception as exc:
         raise RuntimeError("Promotion blocked: invalid approval proof encoding") from exc
-    if not isinstance(payload, dict) or payload.get("schemaVersion") != 1:
+    if not isinstance(payload, dict) or payload.get("schemaVersion") != 2:
         raise RuntimeError("Promotion blocked: unsupported approval proof schema")
     if payload.get("releaseId") != release_id:
         raise RuntimeError("Promotion blocked: approval proof does not match the Pre-Prod release ID")
+    if payload.get("vetoed"):
+        raise RuntimeError("Promotion blocked: release is vetoed")
     issued_raw = str(payload.get("issuedAt") or "")
     try:
         issued_at = datetime.fromisoformat(issued_raw.replace("Z", "+00:00"))
@@ -1136,6 +1153,8 @@ def verify_promote_approval(release_id, proof_b64, key_file=None, required_ids=R
     approvers = payload.get("approvers")
     if not isinstance(approvers, list):
         raise RuntimeError("Promotion blocked: missing approver list")
+    allowed_set = {str(aid).strip().lower() for aid in allowed_ids}
+    override_set = {str(aid).strip().lower() for aid in veto_override_ids}
     seen_ids = {}
     canonical_items = []
     for item in approvers:
@@ -1146,13 +1165,42 @@ def verify_promote_approval(release_id, proof_b64, key_file=None, required_ids=R
         approved_at = str(item.get("approvedAt") or "").strip()
         if not aid or "@" not in email or not approved_at:
             raise RuntimeError("Promotion blocked: incomplete approver record")
+        if "|" in aid or ":" in aid or "|" in email or ":" in email or "|" in approved_at:
+            raise RuntimeError("Promotion blocked: malformed approver record")
+        if aid not in allowed_set:
+            raise RuntimeError(f"Promotion blocked: unauthorized approver '{aid}'")
         if aid in seen_ids:
             raise RuntimeError("Promotion blocked: duplicate approver entry")
         seen_ids[aid] = email
         canonical_items.append(f"{aid}:{email}:{approved_at}")
-    missing = [aid for aid in required_ids if aid not in seen_ids]
-    if missing:
-        raise RuntimeError("Promotion blocked: missing approvals from " + ", ".join(missing))
+    mode = str(payload.get("mode") or "").strip().lower()
+    override_part = ""
+    if mode == "quorum":
+        if payload.get("overrideBy") is not None:
+            raise RuntimeError("Promotion blocked: unexpected override metadata in quorum proof")
+        if len(seen_ids) < min_approvals:
+            raise RuntimeError(
+                f"Promotion blocked: requires at least {min_approvals} distinct authorized admin approvals "
+                f"(got {len(seen_ids)})"
+            )
+    elif mode == "veto_override":
+        override_by = payload.get("overrideBy")
+        if not isinstance(override_by, dict):
+            raise RuntimeError("Promotion blocked: missing override authorizer")
+        oid = str(override_by.get("id") or "").strip().lower()
+        oemail = str(override_by.get("email") or "").strip().lower()
+        overridden_at = str(override_by.get("overriddenAt") or "").strip()
+        if not oid or "@" not in oemail or not overridden_at:
+            raise RuntimeError("Promotion blocked: incomplete override authorizer record")
+        if "|" in oid or ":" in oid or "|" in oemail or ":" in oemail or "|" in overridden_at:
+            raise RuntimeError("Promotion blocked: malformed override authorizer record")
+        if oid not in override_set:
+            raise RuntimeError(f"Promotion blocked: admin '{oid}' does not have release override authority")
+        if oid not in seen_ids or seen_ids[oid] != oemail:
+            raise RuntimeError("Promotion blocked: override authorizer must be present in approvers list")
+        override_part = f"{oid}:{oemail}:{overridden_at}"
+    else:
+        raise RuntimeError("Promotion blocked: unsupported approval proof mode")
     key_path = Path(key_file) if key_file is not None else Path(os.environ.get("CHESSALIVE_APPROVAL_SECRET_FILE") or (CONFIG / "promote-approval.key"))
     if not key_path.is_file():
         raise RuntimeError("Promotion blocked: host approval signing key is not provisioned")
@@ -1162,7 +1210,7 @@ def verify_promote_approval(release_id, proof_b64, key_file=None, required_ids=R
     sig = str(payload.get("signature") or "").strip().lower()
     canonical_items.sort()
     commit_hash = str(payload.get("commitHash") or "")
-    message = f"v1|{release_id}|{commit_hash}|{issued_raw}|" + "|".join(canonical_items)
+    message = f"v2|{release_id}|{commit_hash}|{issued_raw}|{mode}|{override_part}|" + "|".join(canonical_items)
     expected = hmac.new(secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(sig, expected):
         raise RuntimeError("Promotion blocked: approval proof signature verification failed")

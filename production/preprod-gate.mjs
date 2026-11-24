@@ -236,7 +236,7 @@ button:hover{background:#006854}
     <button type="submit">Sign In to Pre-Prod →</button>
     ${errorMessage ? `<p class="err" role="alert">${escapeHtml(errorMessage)}</p>` : ""}
   </form>
-  <div class="foot">After entering Pre-Prod, sign in with your ChessAlive account to test live profile &amp; gameplay. To promote to Production, <strong>all 3 admins (Lakshmi, Vinoth, Avinash)</strong> must approve in the <a href="http://129.225.116.198:8787" target="_blank" rel="noopener noreferrer" style="color:#007e66;font-weight:650">Release Command Center</a>.</div>
+  <div class="foot">After entering Pre-Prod, sign in with your ChessAlive account to test live profile &amp; gameplay. To promote to Production, <strong>any 2 of 3 admins (Lakshmi, Vinoth, Avinash)</strong> must approve in the <a href="http://129.225.116.198:8787" target="_blank" rel="noopener noreferrer" style="color:#007e66;font-weight:650">Release Command Center</a> (Lakshmi also holds release veto &amp; override power).</div>
 </main>
 <script nonce="${nonce}">
 (function(){

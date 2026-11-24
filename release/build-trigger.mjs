@@ -9,7 +9,7 @@ import { promisify } from "node:util";
 import { createResourceMonitor } from "./resource-monitor.mjs";
 import { dashboardHtml, loginHtml } from "./dashboard.mjs";
 import { stepTemplate, emptyMetrics, elapsedMs, applyStepEvent, createLineDecoder, parseStepEvent, sampleProcessMemory, recordMemory, finishSteps } from "./build-metrics.mjs";
-import { createApprovalManager, parseApproversConfig } from "./approvals.mjs";
+import { createApprovalManager, parseApproversConfig, parseQuorumConfig } from "./approvals.mjs";
 
 import { createMonitorIssueReport, MONITOR_INTERVAL_MS, nextMonitorIncidentState } from "./monitor-policy.mjs";
 
@@ -50,6 +50,7 @@ const requireEmailOtp = process.env.BUILD_REQUIRE_EMAIL_OTP === "no"
   ? false
   : (process.env.BUILD_REQUIRE_EMAIL_OTP === "yes" || Boolean(resendApiKey || (smtpUrl && nodemailer)));
 const requiredApprovers = parseApproversConfig(process.env.PROMOTE_APPROVERS);
+const requiredQuorum = parseQuorumConfig(process.env.PROMOTE_REQUIRED_APPROVALS, requiredApprovers.length);
 const approvalStateFile = process.env.PROMOTE_APPROVAL_STATE_FILE || resolve(root, ".state/promote-approvals.json");
 const approvalSecretFile = process.env.PROMOTE_APPROVAL_SECRET_FILE || "/etc/chessalive/promote-approval.key";
 function loadApprovalSecret() {
@@ -61,7 +62,7 @@ function loadApprovalSecret() {
   } catch { /* fail closed when promote is attempted */ }
   return "";
 }
-const approvals = createApprovalManager({ stateFile: approvalStateFile, approvers: requiredApprovers });
+const approvals = createApprovalManager({ stateFile: approvalStateFile, approvers: requiredApprovers, requiredCount: requiredQuorum });
 const monitorPaths = (process.env.MONITOR_PATHS || "/,/health,/version,/play,/tactics,/coach")
   .split(",").map(value => value.trim()).filter(Boolean);
 const maxLogBytes = 120_000;
@@ -248,10 +249,13 @@ function publicState(session = null) {
   const ppCommit = pp.commitHash || 'unknown';
   const approvalStatus = approvals.getStatus(pp.releaseId);
   const artifactPromotable = Boolean(pp.promotable);
-  const fullyPromotable = Boolean(artifactPromotable && approvalStatus.allApproved);
+  const fullyPromotable = Boolean(artifactPromotable && !approvalStatus.vetoed && approvalStatus.quorumMet);
+  const userCanVeto = Boolean(session?.admin && approvals.canVeto(session.admin));
+  const userCanOverride = Boolean(session?.admin && approvals.canOverride(session.admin));
+  const canOverridePromote = Boolean(artifactPromotable && !approvalStatus.vetoed && !approvalStatus.quorumMet && session?.otpVerified && userCanOverride);
   return {
     serverTime: new Date().toISOString(),
-    currentUser: session?.admin ? { ...session.admin, otpVerified: Boolean(session.otpVerified) } : null,
+    currentUser: session?.admin ? { ...session.admin, otpVerified: Boolean(session.otpVerified), canVeto: userCanVeto, canOverride: userCanOverride } : null,
     requireEmailOtp,
     resources: resources.publicState(),
     rollback,
@@ -264,13 +268,17 @@ function publicState(session = null) {
       systemdState: pp.systemdState || 'inactive',
       complete: Boolean(pp.complete),
       artifactPromotable,
+      vetoed: Boolean(approvalStatus.vetoed),
       promotable: fullyPromotable,
+      canOverridePromote,
       inSyncWithProd: Boolean(pp.inSyncWithProd),
       reason: !artifactPromotable
         ? (pp.reason || 'no_preprod_release')
-        : approvalStatus.allApproved
-          ? 'ready_to_promote'
-          : 'awaiting_approvals',
+        : approvalStatus.vetoed
+          ? 'vetoed'
+          : approvalStatus.quorumMet
+            ? 'ready_to_promote'
+            : 'awaiting_approvals',
       approvals: approvalStatus,
       commitHash: ppCommit,
       commitMessage: pp.commitMessage || (pp.releaseId ? 'Staged pre-prod release' : 'No pre-prod build deployed yet'),
@@ -320,7 +328,7 @@ function releaseCommitSummary() {
 
 async function sendOtpEmail(approver, code) {
   const subject = `ChessAlive Release Console sign-in code: ${code}`;
-  const html = `<!doctype html><html><body style="margin:0;background:#08111f;font-family:Arial,sans-serif;color:#eaf1ff"><div style="max-width:540px;margin:24px auto;padding:30px;background:#111e33;border:1px solid #29415f;border-radius:16px"><div style="font-size:12px;letter-spacing:2px;color:#6ea8ff">CHESSALIVE RELEASE CONSOLE</div><h1 style="margin:14px 0 8px;color:#fff;font-size:22px">Hi ${escapeHtml(approver.name)}, here is your sign-in code</h1><p style="color:#b8c9e5;line-height:1.6">Use this 6-digit one-time code to verify your admin identity and approve Pre-Prod → Production releases. It expires in 10 minutes.</p><div style="margin:22px 0;padding:18px;border-radius:10px;background:#0b1627;border:1px solid #2a4668;text-align:center;font-size:34px;font-weight:700;letter-spacing:8px;color:#c8f1db;font-family:monospace">${escapeHtml(code)}</div><p style="color:#8da6c8;font-size:12px;line-height:1.6">Never share this code with anyone. All 3 required admins (Lakshmi, Vinoth, Avinash) must verify individually before any build moves to Production.</p></div></body></html>`;
+  const html = `<!doctype html><html><body style="margin:0;background:#08111f;font-family:Arial,sans-serif;color:#eaf1ff"><div style="max-width:540px;margin:24px auto;padding:30px;background:#111e33;border:1px solid #29415f;border-radius:16px"><div style="font-size:12px;letter-spacing:2px;color:#6ea8ff">CHESSALIVE RELEASE CONSOLE</div><h1 style="margin:14px 0 8px;color:#fff;font-size:22px">Hi ${escapeHtml(approver.name)}, here is your sign-in code</h1><p style="color:#b8c9e5;line-height:1.6">Use this 6-digit one-time code to verify your admin identity and approve Pre-Prod → Production releases. It expires in 10 minutes.</p><div style="margin:22px 0;padding:18px;border-radius:10px;background:#0b1627;border:1px solid #2a4668;text-align:center;font-size:34px;font-weight:700;letter-spacing:8px;color:#c8f1db;font-family:monospace">${escapeHtml(code)}</div><p style="color:#8da6c8;font-size:12px;line-height:1.6">Never share this code with anyone. Any 2 of 3 authorized admins (Lakshmi, Vinoth, Avinash) must verify individually before promoting to Production (Lakshmi also holds release veto &amp; override power).</p></div></body></html>`;
   const text = `Hi ${approver.name},\n\nYour ChessAlive Release Console sign-in code is: ${code}\n\nIt expires in 10 minutes. Never share this code.`;
   if (resendApiKey) {
     const response = await fetch(resendApiUrl, {
@@ -374,7 +382,11 @@ function startBuild(kind = 'build', options = {}) {
   const targetEnv = defaultDeployTarget;
   const script = isRollback ? './release/rollback-chessd.sh' : isPromote ? './release/promote-chessd.sh' : './release/local-release.sh';
   const actorLine = options.actor ? `Triggered by ${options.actor.name} (${options.actor.email})\n` : '';
-  const approvalLine = isPromote && options.approversSummary ? `Verified 3/3 admin approvals: ${options.approversSummary}\n` : '';
+  const approvalLine = isPromote && options.approversSummary
+    ? (options.overrideUsed
+      ? `Authorized via Lakshmi unilateral release override: ${options.approversSummary}\n`
+      : `Verified 2-of-3 admin approval quorum: ${options.approversSummary}\n`)
+    : '';
   const initialLog = isRollback
     ? `${actorLine}Restoring the previous retained release on Mumbai\n`
     : isPromote
@@ -505,7 +517,8 @@ const server = createServer(async (request, response) => {
   if (url.pathname === "/api/login/config" && request.method === "GET") {
     return sendJson(response, 200, {
       requireEmailOtp,
-      approvers: requiredApprovers.map(a => ({ id: a.id, name: a.name, email: a.email })),
+      requiredCount: approvals.requiredCount,
+      approvers: requiredApprovers.map(a => ({ id: a.id, name: a.name, email: a.email, canVeto: Boolean(a.canVeto), canOverride: Boolean(a.canOverride) })),
     });
   }
   if (url.pathname === "/api/login/request-otp" && request.method === "POST") {
@@ -597,16 +610,33 @@ const server = createServer(async (request, response) => {
         : "No verified Pre-Prod build is waiting for approval.";
       return sendJson(response, 409, { error: reason, ...publicState(session) });
     }
+    const existingStatus = approvals.getStatus(pp.releaseId);
+    if (existingStatus.vetoed && existingStatus.veto?.id === session.admin.id) {
+      return sendJson(response, 409, {
+        error: "This Pre-Prod release is currently vetoed by you. Lift the veto first before approving.",
+        ...publicState(session),
+      });
+    }
     const updated = approvals.approve(pp.releaseId, session.admin, { commitHash: pp.commitHash, version: pp.version });
     const pendingNames = updated.pending.map(p => p.name).join(", ");
-    const summary = updated.allApproved
-      ? `${session.admin.name} approved Pre-Prod release ${pp.releaseId} (${updated.approvedCount}/${updated.requiredCount}). All 3 required admins (Lakshmi, Vinoth, Avinash) have approved — Ready to Promote to Production!`
-      : `${session.admin.name} approved Pre-Prod release ${pp.releaseId} (${updated.approvedCount}/${updated.requiredCount}). Still waiting for: ${pendingNames}.`;
-    void sendAdminEmail(
-      updated.allApproved ? `ChessAlive Pre-Prod APPROVED (3/3) — Ready to Promote` : `ChessAlive Pre-Prod approval ${updated.approvedCount}/${updated.requiredCount} (${session.admin.name})`,
-      updated.allApproved ? "All 3 admins approved Pre-Prod" : `Approval ${updated.approvedCount} of ${updated.requiredCount} recorded`,
-      `${summary}\nPre-Prod URL: ${preprodUrl}`
-    );
+    const approvedNames = updated.approvedBy.map(a => a.name).join(", ");
+    const vetoReason = updated.veto?.reason ? ` (${updated.veto.reason})` : "";
+    const subject = updated.vetoed
+      ? `ChessAlive Pre-Prod approval ${updated.approvedCount}/${updated.totalApprovers} (${session.admin.name}) — VETOED by ${updated.veto.name}`
+      : updated.quorumMet
+        ? `ChessAlive Pre-Prod APPROVED (${updated.approvedCount}/${updated.totalApprovers} quorum) — Ready to Promote`
+        : `ChessAlive Pre-Prod approval ${updated.approvedCount}/${updated.requiredCount} (${session.admin.name})`;
+    const title = updated.vetoed
+      ? `Approval recorded — promotion still blocked by ${updated.veto.name}'s veto`
+      : updated.quorumMet
+        ? `Quorum met (${updated.approvedCount} of ${updated.totalApprovers} admins approved)`
+        : `Approval ${updated.approvedCount} of ${updated.requiredCount} recorded`;
+    const summary = updated.vetoed
+      ? `${session.admin.name} approved Pre-Prod release ${pp.releaseId} (${updated.approvedCount}/${updated.totalApprovers}: ${approvedNames}), but promotion remains BLOCKED by ${updated.veto.name}'s veto${vetoReason}.`
+      : updated.quorumMet
+        ? `${session.admin.name} approved Pre-Prod release ${pp.releaseId} (${updated.approvedCount}/${updated.totalApprovers}: ${approvedNames}). Quorum of ${updated.requiredCount} met — Ready to Promote to Production!`
+        : `${session.admin.name} approved Pre-Prod release ${pp.releaseId} (${updated.approvedCount}/${updated.requiredCount} needed). Waiting for ${updated.requiredCount - updated.approvedCount} more approval from: ${pendingNames} (or Lakshmi override).`;
+    void sendAdminEmail(subject, title, `${summary}\nPre-Prod URL: ${preprodUrl}`);
     return sendJson(response, 200, publicState(session));
   }
   if (url.pathname === "/api/promote/revoke" && request.method === "POST") {
@@ -620,11 +650,81 @@ const server = createServer(async (request, response) => {
     }
     return sendJson(response, 200, publicState(session));
   }
+  if (url.pathname === "/api/promote/veto" && request.method === "POST") {
+    if (!session.admin?.id || !session.otpVerified) {
+      return sendJson(response, 403, { error: "Individual admin email sign-in is required.", ...publicState(session) });
+    }
+    if (!approvals.canVeto(session.admin)) {
+      return sendJson(response, 403, { error: "Only Lakshmi has release veto power.", ...publicState(session) });
+    }
+    if (state.release.child) return sendJson(response, 409, { error: "a release is already running", ...publicState(session) });
+    let body = {};
+    try {
+      const raw = await readBody(request);
+      if (raw.trim()) body = JSON.parse(raw);
+    } catch (error) {
+      return sendJson(response, 400, { error: error.message === "request too large" ? error.message : "Invalid veto request", ...publicState(session) });
+    }
+    await refreshRollback();
+    const pp = rollback.preprod;
+    if (!pp?.promotable || !pp.releaseId) {
+      const reason = pp?.reason === "already_live"
+        ? "This Pre-Prod build is already live in production."
+        : "No verified Pre-Prod build is waiting for promotion.";
+      return sendJson(response, 409, { error: reason, ...publicState(session) });
+    }
+    const updated = approvals.veto(pp.releaseId, session.admin, {
+      reason: typeof body?.reason === "string" ? body.reason : "",
+      commitHash: pp.commitHash,
+      version: pp.version,
+    });
+    const reasonText = updated.veto?.reason ? `\nReason: ${updated.veto.reason}` : "";
+    void sendAdminEmail(
+      `ChessAlive Pre-Prod VETOED by ${session.admin.name} (${pp.releaseId})`,
+      `Pre-Prod release vetoed by ${session.admin.name}`,
+      `${session.admin.name} vetoed Pre-Prod release ${pp.releaseId}.${reasonText}\nPromotion to Production is blocked (even if other admins approve) until ${session.admin.name} lifts the veto or a newer Pre-Prod build is deployed.\nPre-Prod URL: ${preprodUrl}`
+    );
+    return sendJson(response, 200, publicState(session));
+  }
+  if (url.pathname === "/api/promote/unveto" && request.method === "POST") {
+    if (!session.admin?.id || !session.otpVerified) {
+      return sendJson(response, 403, { error: "Individual admin email sign-in is required.", ...publicState(session) });
+    }
+    if (!approvals.canVeto(session.admin)) {
+      return sendJson(response, 403, { error: "Only Lakshmi has release veto power.", ...publicState(session) });
+    }
+    if (state.release.child) return sendJson(response, 409, { error: "a release is already running", ...publicState(session) });
+    await refreshRollback();
+    const pp = rollback.preprod;
+    if (pp?.releaseId) {
+      const result = approvals.unveto(pp.releaseId, session.admin);
+      if (result.changed) {
+        const st = result.status;
+        const readiness = st.quorumMet
+          ? `Quorum is met (${st.approvedCount}/${st.totalApprovers}) — Ready to Promote to Production.`
+          : `Currently ${st.approvedCount}/${st.requiredCount} approvals recorded.`;
+        void sendAdminEmail(
+          `ChessAlive Pre-Prod veto lifted by ${session.admin.name} (${pp.releaseId})`,
+          `Release veto lifted by ${session.admin.name}`,
+          `${session.admin.name} lifted the veto on Pre-Prod release ${pp.releaseId}. ${readiness}\nPre-Prod URL: ${preprodUrl}`
+        );
+      }
+    }
+    return sendJson(response, 200, publicState(session));
+  }
   if (url.pathname === '/api/promote' && request.method === 'POST') {
     if (!session.admin?.id || !session.otpVerified) {
       return sendJson(response, 403, { error: 'Individual admin email sign-in is required to promote to production.', ...publicState(session) });
     }
     if (state.release.child) return sendJson(response, 409, { error: 'a release is already running', ...publicState(session) });
+    let body = {};
+    try {
+      const raw = await readBody(request);
+      if (raw.trim()) body = JSON.parse(raw);
+    } catch (error) {
+      return sendJson(response, 400, { error: error.message === 'request too large' ? error.message : 'Invalid promote request', ...publicState(session) });
+    }
+    const overrideRequested = body?.override === true;
     await refreshRollback();
     const pp = rollback.preprod;
     if (!pp?.promotable || !pp.releaseId) {
@@ -634,20 +734,46 @@ const server = createServer(async (request, response) => {
       return sendJson(response, 409, { error: reason, ...publicState(session) });
     }
     const approvalStatus = approvals.getStatus(pp.releaseId);
-    if (!approvalStatus.allApproved) {
-      const missingNames = approvalStatus.pending.map(p => p.name).join(', ');
+    if (approvalStatus.vetoed) {
+      const reasonSuffix = approvalStatus.veto?.reason ? ` (${approvalStatus.veto.reason})` : '';
       return sendJson(response, 403, {
-        error: `All 3 admins (Lakshmi, Vinoth, Avinash) must approve ${pp.releaseId} before promoting to production (${approvalStatus.approvedCount}/${approvalStatus.requiredCount} approved; pending: ${missingNames}).`,
+        error: `Promotion blocked: Pre-Prod release ${pp.releaseId} was vetoed by ${approvalStatus.veto.name}${reasonSuffix}. Lift the veto before promoting.`,
         ...publicState(session),
       });
+    }
+    let useOverride = false;
+    if (!approvalStatus.quorumMet) {
+      if (overrideRequested) {
+        if (!approvals.canOverride(session.admin)) {
+          return sendJson(response, 403, {
+            error: `Only Lakshmi has unilateral release override power. At least ${approvalStatus.requiredCount} of ${approvalStatus.totalApprovers} admins must approve ${pp.releaseId} before promoting.`,
+            ...publicState(session),
+          });
+        }
+        useOverride = true;
+      } else {
+        const missingNames = approvalStatus.pending.map(p => p.name).join(', ');
+        const overrideHint = approvals.canOverride(session.admin)
+          ? ' Or use Override & Promote (Lakshmi) to promote unilaterally.'
+          : '';
+        return sendJson(response, 403, {
+          error: `At least ${approvalStatus.requiredCount} of ${approvalStatus.totalApprovers} admins (Lakshmi, Vinoth, Avinash) must approve ${pp.releaseId} before promoting to production (${approvalStatus.approvedCount}/${approvalStatus.requiredCount} approved; pending: ${missingNames}).${overrideHint}`,
+          ...publicState(session),
+        });
+      }
     }
     const secret = loadApprovalSecret();
     if (!secret) {
       return sendJson(response, 500, { error: 'Approval signing key is not configured on the build host.', ...publicState(session) });
     }
-    const approvalProof = approvals.buildSignedProof(pp.releaseId, secret, { commitHash: pp.commitHash });
-    const approversSummary = approvalStatus.approvedBy.map(a => `${a.name} (${a.email})`).join(', ');
-    if (!startBuild('promote', { actor: session.admin, approvalProof, approversSummary })) return sendJson(response, 409, { error: 'a release is already running', ...publicState(session) });
+    const approvalProof = approvals.buildSignedProof(pp.releaseId, secret, {
+      commitHash: pp.commitHash,
+      version: pp.version,
+      overrideBy: useOverride ? session.admin : null,
+    });
+    const finalStatus = approvals.getStatus(pp.releaseId);
+    const approversSummary = finalStatus.approvedBy.map(a => `${a.name} (${a.email})`).join(', ');
+    if (!startBuild('promote', { actor: session.admin, approvalProof, approversSummary, overrideUsed: useOverride })) return sendJson(response, 409, { error: 'a release is already running', ...publicState(session) });
     return sendJson(response, 202, publicState(session));
   }
   if (url.pathname === '/api/rollback' && request.method === 'POST') {

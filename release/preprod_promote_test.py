@@ -14,19 +14,38 @@ import release_store
 import runtime_transaction
 
 
-def sign_proof(release_id, secret, approvers, issued_at=None, commit_hash="c" * 40):
+def sign_proof(
+    release_id,
+    secret,
+    approvers,
+    issued_at=None,
+    commit_hash="c" * 40,
+    mode="quorum",
+    override_by=None,
+    schema_version=2,
+    extra=None,
+):
     issued = issued_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     items = sorted(f"{a['id']}:{a['email']}:{a['approvedAt']}" for a in approvers)
-    msg = f"v1|{release_id}|{commit_hash}|{issued}|" + "|".join(items)
+    override_part = (
+        f"{override_by['id']}:{override_by['email']}:{override_by['overriddenAt']}"
+        if override_by
+        else ""
+    )
+    msg = f"v2|{release_id}|{commit_hash}|{issued}|{mode}|{override_part}|" + "|".join(items)
     sig = hmac.new(secret.encode("utf-8"), msg.encode("utf-8"), hashlib.sha256).hexdigest()
     payload = {
-        "schemaVersion": 1,
+        "schemaVersion": schema_version,
         "releaseId": release_id,
         "commitHash": commit_hash,
         "issuedAt": issued,
+        "mode": mode,
+        "overrideBy": override_by,
         "approvers": approvers,
         "signature": sig,
     }
+    if extra:
+        payload.update(extra)
     return base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
 
 
@@ -87,59 +106,136 @@ class PreprodPromoteTest(unittest.TestCase):
             self.assertEqual(after["current"]["commitHash"], "c" * 40)
             self.assertEqual(after["previous"]["commitHash"], "b" * 40)
 
-    def test_verify_promote_approval_enforces_all_three_admins_and_signature(self):
+    def test_verify_promote_approval_enforces_2_of_3_quorum_and_lakshmi_override(self):
         rel_id = "release-20261120t120000z-333333"
         secret = "9" * 64
         now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        three_admins = [
-            {"id": "lakshmi", "name": "Lakshmi", "email": "lakshminathanlaky@gmail.com", "approvedAt": now_iso},
-            {"id": "vinoth", "name": "Vinoth", "email": "vinoth121022@gmail.com", "approvedAt": now_iso},
-            {"id": "avinash", "name": "Avinash", "email": "avinashr95@gmail.com", "approvedAt": now_iso},
-        ]
+        lakshmi = {"id": "lakshmi", "name": "Lakshmi", "email": "lakshminathanlaky@gmail.com", "approvedAt": now_iso}
+        vinoth = {"id": "vinoth", "name": "Vinoth", "email": "vinoth121022@gmail.com", "approvedAt": now_iso}
+        avinash = {"id": "avinash", "name": "Avinash", "email": "avinashr95@gmail.com", "approvedAt": now_iso}
+        three_admins = [lakshmi, vinoth, avinash]
+
         with tempfile.TemporaryDirectory() as tmp:
             key_file = Path(tmp) / "promote-approval.key"
             key_file.write_text(secret + "\n", encoding="utf-8")
 
             # Missing proof is rejected
-            with self.assertRaisesRegex(RuntimeError, "all 3 required admins"):
+            with self.assertRaisesRegex(RuntimeError, "at least 2 of 3"):
                 runtime_transaction.verify_promote_approval(rel_id, "", key_file=key_file)
 
-            # Valid 3/3 signed proof passes
-            valid = sign_proof(rel_id, secret, three_admins)
+            # Legacy schema v1 rejected
+            legacy_v1 = sign_proof(rel_id, secret, three_admins, schema_version=1)
+            with self.assertRaisesRegex(RuntimeError, "unsupported approval proof schema"):
+                runtime_transaction.verify_promote_approval(rel_id, legacy_v1, key_file=key_file)
+
+            # Any 2 of 3 distinct authorized admins pass in quorum mode
             self.assertEqual(
-                runtime_transaction.verify_promote_approval(rel_id, valid, key_file=key_file),
+                runtime_transaction.verify_promote_approval(rel_id, sign_proof(rel_id, secret, [vinoth, avinash]), key_file=key_file),
+                ["avinash", "vinoth"],
+            )
+            self.assertEqual(
+                runtime_transaction.verify_promote_approval(rel_id, sign_proof(rel_id, secret, [lakshmi, vinoth]), key_file=key_file),
+                ["lakshmi", "vinoth"],
+            )
+            self.assertEqual(
+                runtime_transaction.verify_promote_approval(rel_id, sign_proof(rel_id, secret, [lakshmi, avinash]), key_file=key_file),
+                ["avinash", "lakshmi"],
+            )
+            # All 3 also passes
+            self.assertEqual(
+                runtime_transaction.verify_promote_approval(rel_id, sign_proof(rel_id, secret, three_admins), key_file=key_file),
                 ["avinash", "lakshmi", "vinoth"],
             )
 
-            # 2/3 approvers rejected
-            two_only = sign_proof(rel_id, secret, three_admins[:2])
-            with self.assertRaisesRegex(RuntimeError, "missing approvals from avinash"):
-                runtime_transaction.verify_promote_approval(rel_id, two_only, key_file=key_file)
+            # Only 1 approver in quorum mode is rejected
+            one_only = sign_proof(rel_id, secret, [vinoth])
+            with self.assertRaisesRegex(RuntimeError, "at least 2 distinct authorized admin approvals"):
+                runtime_transaction.verify_promote_approval(rel_id, one_only, key_file=key_file)
 
             # Duplicate approver rejected
-            dup = sign_proof(rel_id, secret, [three_admins[0], three_admins[0], three_admins[1]])
+            dup = sign_proof(rel_id, secret, [vinoth, vinoth])
             with self.assertRaisesRegex(RuntimeError, "duplicate approver"):
                 runtime_transaction.verify_promote_approval(rel_id, dup, key_file=key_file)
 
+            # Unauthorized admin IDs rejected
+            strangers = [
+                {"id": "alice", "name": "Alice", "email": "alice@example.com", "approvedAt": now_iso},
+                {"id": "bob", "name": "Bob", "email": "bob@example.com", "approvedAt": now_iso},
+            ]
+            with self.assertRaisesRegex(RuntimeError, "unauthorized approver"):
+                runtime_transaction.verify_promote_approval(rel_id, sign_proof(rel_id, secret, strangers), key_file=key_file)
+
+            # Lakshmi unilateral veto_override passes solo
+            lakshmi_override_meta = {
+                "id": "lakshmi",
+                "name": "Lakshmi",
+                "email": "lakshminathanlaky@gmail.com",
+                "overriddenAt": now_iso,
+            }
+            solo_override = sign_proof(
+                rel_id,
+                secret,
+                [lakshmi],
+                mode="veto_override",
+                override_by=lakshmi_override_meta,
+            )
+            self.assertEqual(
+                runtime_transaction.verify_promote_approval(rel_id, solo_override, key_file=key_file),
+                ["lakshmi"],
+            )
+
+            # Non-Lakshmi (Vinoth / Avinash) cannot use veto_override
+            vinoth_override_meta = {
+                "id": "vinoth",
+                "name": "Vinoth",
+                "email": "vinoth121022@gmail.com",
+                "overriddenAt": now_iso,
+            }
+            bad_override = sign_proof(
+                rel_id,
+                secret,
+                [vinoth],
+                mode="veto_override",
+                override_by=vinoth_override_meta,
+            )
+            with self.assertRaisesRegex(RuntimeError, "does not have release override authority"):
+                runtime_transaction.verify_promote_approval(rel_id, bad_override, key_file=key_file)
+
+            # Override without override authorizer in approvers list is rejected
+            missing_self_override = sign_proof(
+                rel_id,
+                secret,
+                [vinoth],
+                mode="veto_override",
+                override_by=lakshmi_override_meta,
+            )
+            with self.assertRaisesRegex(RuntimeError, "must be present in approvers list"):
+                runtime_transaction.verify_promote_approval(rel_id, missing_self_override, key_file=key_file)
+
+            # Vetoed flag in payload is rejected
+            vetoed_payload = sign_proof(rel_id, secret, [vinoth, avinash], extra={"vetoed": True})
+            with self.assertRaisesRegex(RuntimeError, "release is vetoed"):
+                runtime_transaction.verify_promote_approval(rel_id, vetoed_payload, key_file=key_file)
+
             # Wrong releaseId rejected
-            wrong_rel = sign_proof("release-20261120t999999z-999999", secret, three_admins)
+            wrong_rel = sign_proof("release-20261120t999999z-999999", secret, [vinoth, avinash])
             with self.assertRaisesRegex(RuntimeError, "does not match the Pre-Prod release ID"):
                 runtime_transaction.verify_promote_approval(rel_id, wrong_rel, key_file=key_file)
 
             # Expired timestamp rejected
             old_iso = (datetime.now(timezone.utc) - timedelta(seconds=600)).isoformat().replace("+00:00", "Z")
-            expired = sign_proof(rel_id, secret, three_admins, issued_at=old_iso)
+            expired = sign_proof(rel_id, secret, [vinoth, avinash], issued_at=old_iso)
             with self.assertRaisesRegex(RuntimeError, "expired"):
                 runtime_transaction.verify_promote_approval(rel_id, expired, key_file=key_file)
 
             # Wrong signing secret rejected
-            bad_sig = sign_proof(rel_id, "8" * 64, three_admins)
+            bad_sig = sign_proof(rel_id, "8" * 64, [vinoth, avinash])
             with self.assertRaisesRegex(RuntimeError, "signature verification failed"):
                 runtime_transaction.verify_promote_approval(rel_id, bad_sig, key_file=key_file)
 
-            # Cross-language verification: proof minted by Node approvals.mjs must verify in Python
+            # Cross-language verification: Node approvals.mjs quorum (2/3 without Lakshmi) and Lakshmi override both verify in Python
             approvals_path = Path(__file__).resolve().parent / "approvals.mjs"
-            node_out = subprocess.check_output(
+            node_quorum = subprocess.check_output(
                 [
                     "node",
                     "--input-type=module",
@@ -147,16 +243,55 @@ class PreprodPromoteTest(unittest.TestCase):
                     (
                         f"import {{ createApprovalManager }} from {json.dumps(approvals_path.as_uri())};"
                         f"const m = createApprovalManager();"
-                        f"for (const id of ['lakshmi', 'vinoth', 'avinash']) m.approve({json.dumps(rel_id)}, {{ id }}, {{ commitHash: 'abc123' }});"
+                        f"for (const id of ['vinoth', 'avinash']) m.approve({json.dumps(rel_id)}, {{ id }}, {{ commitHash: 'abc123' }});"
                         f"process.stdout.write(m.buildSignedProof({json.dumps(rel_id)}, {json.dumps(secret)}, {{ commitHash: 'abc123' }}));"
                     ),
                 ],
                 text=True,
             )
             self.assertEqual(
-                runtime_transaction.verify_promote_approval(rel_id, node_out.strip(), key_file=key_file),
-                ["avinash", "lakshmi", "vinoth"],
+                runtime_transaction.verify_promote_approval(rel_id, node_quorum.strip(), key_file=key_file),
+                ["avinash", "vinoth"],
             )
+
+            node_override = subprocess.check_output(
+                [
+                    "node",
+                    "--input-type=module",
+                    "-e",
+                    (
+                        f"import {{ createApprovalManager }} from {json.dumps(approvals_path.as_uri())};"
+                        f"const m = createApprovalManager();"
+                        f"process.stdout.write(m.buildSignedProof({json.dumps(rel_id)}, {json.dumps(secret)}, {{ commitHash: 'abc123', overrideBy: {{ id: 'lakshmi' }} }}));"
+                    ),
+                ],
+                text=True,
+            )
+            self.assertEqual(
+                runtime_transaction.verify_promote_approval(rel_id, node_override.strip(), key_file=key_file),
+                ["lakshmi"],
+            )
+
+            # Node approvals.mjs refuses to build any proof when vetoed by Lakshmi even with Vinoth + Avinash approved
+            node_veto_check = subprocess.run(
+                [
+                    "node",
+                    "--input-type=module",
+                    "-e",
+                    (
+                        f"import {{ createApprovalManager }} from {json.dumps(approvals_path.as_uri())};"
+                        f"const m = createApprovalManager();"
+                        f"m.approve({json.dumps(rel_id)}, {{ id: 'vinoth' }});"
+                        f"m.approve({json.dumps(rel_id)}, {{ id: 'avinash' }});"
+                        f"m.veto({json.dumps(rel_id)}, {{ id: 'lakshmi' }}, {{ reason: 'hold' }});"
+                        f"m.buildSignedProof({json.dumps(rel_id)}, {json.dumps(secret)});"
+                    ),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(node_veto_check.returncode, 0)
+            self.assertIn("vetoed", node_veto_check.stderr)
 
 
 if __name__ == "__main__":
