@@ -12,10 +12,40 @@ const UPSTREAM_HOST = "127.0.0.1";
 const UPSTREAM_PORT = Number(process.env.PREPROD_UPSTREAM_PORT || 8083);
 
 const COOKIE_NAME = "chessalive_preprod_gate";
-const SESSION_TTL_SEC = 12 * 3600;
+const SESSION_TTL_SEC = 7 * 24 * 3600;
 const ROBOTS_TAG = "noindex, nofollow, noarchive, nosnippet";
 const ROBOTS_TXT = "User-agent: *\nDisallow: /\n";
 const KEY_FILE = process.env.PREPROD_GATE_KEY_FILE || "/etc/chessalive/preprod-gate.key";
+
+// Self-unregistering service worker served on Pre-Prod (including unauthenticated requests)
+// so offline cache-first shells never mask gate redirects, fresh test builds, or mobile logins.
+const UNREGISTER_SW_JS = `// ChessAlive Pre-Prod: disable offline cache-first SW and purge stale caches.
+self.addEventListener("install", () => {
+  self.skipWaiting();
+});
+self.addEventListener("activate", (event) => {
+  event.waitUntil((async () => {
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    } catch {}
+    try {
+      await self.registration.unregister();
+    } catch {}
+    try {
+      const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      for (const client of clients) {
+        try {
+          const u = new URL(client.url);
+          if (!u.pathname.startsWith("/_preprod/") && "navigate" in client) {
+            await client.navigate(client.url);
+          }
+        } catch {}
+      }
+    } catch {}
+  })());
+});
+`;
 
 function loadSigningKey() {
   try {
@@ -61,10 +91,16 @@ function getAcceptedPasswords() {
 
 function passwordMatches(supplied) {
   if (!supplied) return false;
-  const suppliedHash = crypto.createHash("sha256").update(String(supplied)).digest();
-  for (const want of getAcceptedPasswords()) {
-    const wantHash = crypto.createHash("sha256").update(want).digest();
-    if (crypto.timingSafeEqual(suppliedHash, wantHash)) return true;
+  const candidates = [String(supplied)];
+  const trimmed = candidates[0].trim();
+  if (trimmed && trimmed !== candidates[0]) candidates.push(trimmed);
+  const accepted = getAcceptedPasswords();
+  for (const candidate of candidates) {
+    const suppliedHash = crypto.createHash("sha256").update(candidate).digest();
+    for (const want of accepted) {
+      const wantHash = crypto.createHash("sha256").update(want).digest();
+      if (crypto.timingSafeEqual(suppliedHash, wantHash)) return true;
+    }
   }
   return false;
 }
@@ -160,6 +196,7 @@ function escapeHtml(s) {
 }
 
 function renderLogin(res, status, errorMessage = "", emailValue = "", nextPath = "/") {
+  const nonce = crypto.randomBytes(16).toString("base64");
   const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -170,42 +207,60 @@ function renderLogin(res, status, errorMessage = "", emailValue = "", nextPath =
 <style>
 :root{color-scheme:light;--bg:#f5f5f0;--card:#fff;--ink:#152c37;--muted:#63747c;--line:#dce3df;--accent:#007e66;--warn-bg:#fff5e4;--warn-ink:#8c540b;--err:#b13243}
 *{box-sizing:border-box}
-body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(ellipse at 50% 10%,#e6f1eb,transparent 55%),var(--bg);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--ink)}
-main{width:100%;max-width:430px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:32px;box-shadow:0 16px 48px rgba(21,44,55,.08)}
+body{margin:0;min-height:100svh;display:grid;place-items:center;padding:16px;background:radial-gradient(ellipse at 50% 10%,#e6f1eb,transparent 55%),var(--bg);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--ink)}
+main{width:100%;max-width:430px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px;box-shadow:0 16px 48px rgba(21,44,55,.08)}
 .pill{display:inline-flex;align-items:center;gap:8px;padding:5px 10px;border-radius:999px;background:var(--warn-bg);color:var(--warn-ink);font-size:11px;font-weight:700;letter-spacing:.9px;text-transform:uppercase}
 .dot{width:7px;height:7px;border-radius:50%;background:#d79032}
-h1{margin:16px 0 8px;font-size:23px;letter-spacing:-.6px}
-p{margin:0 0 22px;font-size:13px;line-height:1.65;color:var(--muted)}
-label{display:block;font-size:12px;font-weight:650;margin:14px 0 6px}
-input{width:100%;padding:12px 13px;border:1px solid #d5ded9;border-radius:8px;font-size:15px;background:#fafbf8;color:var(--ink)}
+h1{margin:12px 0 6px;font-size:22px;letter-spacing:-.5px}
+.sub{margin:0 0 16px;font-size:13px;line-height:1.5;color:var(--muted)}
+label{display:block;font-size:12px;font-weight:650;margin:12px 0 6px}
+input{width:100%;padding:12px 13px;border:1px solid #d5ded9;border-radius:8px;font-size:16px;background:#fafbf8;color:var(--ink)}
 input:focus{outline:2px solid #09a68a;border-color:#09a68a}
-button{margin-top:20px;width:100%;padding:13px 16px;border:0;border-radius:8px;background:var(--accent);color:#fff;font-size:14px;font-weight:700;cursor:pointer}
+button{margin-top:18px;width:100%;padding:13px 16px;border:0;border-radius:8px;background:var(--accent);color:#fff;font-size:15px;font-weight:700;cursor:pointer}
 button:hover{background:#006854}
-.err{margin:14px 0 0;color:var(--err);font-size:12px;font-weight:600}
-.foot{margin-top:20px;padding-top:14px;border-top:1px solid var(--line);font-size:11px;line-height:1.6;color:var(--muted)}
+.err{margin:12px 0 0;color:var(--err);font-size:13px;font-weight:600}
+.foot{margin-top:18px;padding-top:14px;border-top:1px solid var(--line);font-size:11px;line-height:1.6;color:var(--muted)}
 </style>
 </head>
 <body>
 <main>
   <span class="pill"><span class="dot"></span>Pre-Prod Testing Environment</span>
   <h1>ChessAlive Pre-Prod</h1>
-  <p>Pre-Prod runs the new test build directly against the shared live database (<strong>chessalive-adb</strong>) while keeping production traffic (<strong>chessalive.com</strong>) undisturbed. Sign in below to enter, then log in with your real ChessAlive email to see your live profile and play.</p>
+  <p class="sub">Sign in with your admin email and console password to enter Pre-Prod (shared live DB <strong>chessalive-adb</strong>, production untouched).</p>
   <form method="POST" action="/_preprod/login">
     <input type="hidden" name="next" value="${escapeHtml(safeNextPath(nextPath))}">
     <label for="email">Admin email</label>
-    <input id="email" name="email" type="email" autocomplete="username" required autofocus value="${escapeHtml(emailValue)}" placeholder="admin@chessalive.com">
+    <input id="email" name="email" type="email" autocomplete="username" spellcheck="false" autocapitalize="none" autocorrect="off" enterkeyhint="next" required autofocus value="${escapeHtml(emailValue)}" placeholder="admin@chessalive.com">
     <label for="password">Operations / Release Console password</label>
-    <input id="password" name="password" type="password" autocomplete="current-password" required placeholder="Enter admin password">
-    <button type="submit">Enter Pre-Prod →</button>
+    <input id="password" name="password" type="password" autocomplete="current-password" enterkeyhint="done" required placeholder="Enter admin password">
+    <button type="submit">Sign In to Pre-Prod →</button>
     ${errorMessage ? `<p class="err" role="alert">${escapeHtml(errorMessage)}</p>` : ""}
   </form>
-  <div class="foot">When testing passes, <strong>all 3 admins (Lakshmi, Vinoth, Avinash)</strong> must individually sign in with their email verification code in the <a href="http://129.225.116.198:8787" target="_blank" rel="noopener noreferrer" style="color:#007e66;font-weight:650">Release Command Center</a> to approve promoting this build to Production.</div>
+  <div class="foot">After entering Pre-Prod, sign in with your ChessAlive account to test live profile &amp; gameplay. To promote to Production, <strong>all 3 admins (Lakshmi, Vinoth, Avinash)</strong> must approve in the <a href="http://129.225.116.198:8787" target="_blank" rel="noopener noreferrer" style="color:#007e66;font-weight:650">Release Command Center</a>.</div>
 </main>
+<script nonce="${nonce}">
+(function(){
+  try {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function(regs){
+        regs.forEach(function(r){ r.unregister().catch(function(){}); });
+      }).catch(function(){});
+    }
+    if ("caches" in window) {
+      caches.keys().then(function(keys){
+        keys.forEach(function(k){ caches.delete(k).catch(function(){}); });
+      }).catch(function(){});
+    }
+  } catch (e) {}
+})();
+</script>
 </body>
 </html>`;
   res.writeHead(status, {
     "Content-Type": "text/html; charset=utf-8",
     "Cache-Control": "no-store, max-age=0",
+    "Pragma": "no-cache",
+    "Content-Security-Policy": `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`,
     "X-Robots-Tag": ROBOTS_TAG,
     "Referrer-Policy": "same-origin",
     "X-Content-Type-Options": "nosniff",
@@ -240,6 +295,11 @@ function hasValidGateAuth(req) {
   return false;
 }
 
+function buildGateCookie(token, maxAgeSec, secure) {
+  const expires = new Date(Date.now() + maxAgeSec * 1000).toUTCString();
+  return `${COOKIE_NAME}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAgeSec}; Expires=${expires}${secure ? "; Secure" : ""}`;
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", "https://preprod.chessalive.com");
   const pathname = url.pathname;
@@ -251,6 +311,21 @@ const server = http.createServer(async (req, res) => {
       "X-Robots-Tag": ROBOTS_TAG,
     });
     res.end(ROBOTS_TXT);
+    return;
+  }
+
+  if (pathname === "/sw.js" && (req.method === "GET" || req.method === "HEAD")) {
+    console.log(`[preprod-gate] sw-unregister 200 ${req.method} /sw.js`);
+    res.writeHead(200, {
+      "Content-Type": "application/javascript; charset=utf-8",
+      "Cache-Control": "no-store, max-age=0",
+      "Pragma": "no-cache",
+      "Service-Worker-Allowed": "/",
+      "X-Content-Type-Options": "nosniff",
+      "X-Robots-Tag": ROBOTS_TAG,
+      "X-ChessAlive-Env": "preprod",
+    });
+    res.end(req.method === "HEAD" ? "" : UNREGISTER_SW_JS);
     return;
   }
 
@@ -268,9 +343,10 @@ const server = http.createServer(async (req, res) => {
     const cookies = parseCookies(req.headers.cookie);
     const session = verifyToken(cookies[COOKIE_NAME]);
     if (session) revokedSessions.add(session.sid);
-    const secure = isHttps(req) ? "; Secure" : "";
+    console.log(`[preprod-gate] logout email=${session ? session.email : "unknown"}`);
     res.writeHead(303, {
-      "Set-Cookie": `${COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`,
+      "Set-Cookie": buildGateCookie("", 0, isHttps(req)),
+      "Clear-Site-Data": '"cookies", "storage", "cache"',
       Location: "/_preprod/login",
       "Cache-Control": "no-store",
       "X-Robots-Tag": ROBOTS_TAG,
@@ -293,6 +369,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST") {
       const ip = clientIP(req);
       if (!allowLoginAttempt(ip)) {
+        console.log(`[preprod-gate] login rate-limited ip=${ip}`);
         renderLogin(res, 429, "Too many sign-in attempts. Please wait 5 minutes and try again.", "", nextPath);
         return;
       }
@@ -303,15 +380,17 @@ const server = http.createServer(async (req, res) => {
         const password = String(params.get("password") || "");
         const target = safeNextPath(params.get("next") || "/");
         if (!isAdminEmail(email) || !passwordMatches(password)) {
+          console.log(`[preprod-gate] login denied email=${email.toLowerCase()}`);
           renderLogin(res, 401, "Invalid admin email or password.", email, target);
           return;
         }
         const token = mintToken(email);
-        const secure = isHttps(req) ? "; Secure" : "";
+        const https = isHttps(req);
+        console.log(`[preprod-gate] login ok email=${email.toLowerCase()} next=${target} https=${https}`);
         res.writeHead(303, {
-          "Set-Cookie": `${COOKIE_NAME}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL_SEC}${secure}`,
+          "Set-Cookie": buildGateCookie(token, SESSION_TTL_SEC, https),
           Location: target,
-          "Cache-Control": "no-store",
+          "Cache-Control": "no-store, max-age=0",
           "X-Robots-Tag": ROBOTS_TAG,
         });
         res.end();
@@ -330,20 +409,29 @@ const server = http.createServer(async (req, res) => {
     const accept = String(req.headers.accept || "");
     if ((req.method === "GET" || req.method === "HEAD") && accept.includes("text/html") && !pathname.startsWith("/api/")) {
       const target = encodeURIComponent(safeNextPath(pathname + url.search));
+      console.log(`[preprod-gate] gate-redirect 302 ${req.method} ${pathname}`);
       res.writeHead(302, {
         Location: `/_preprod/login?next=${target}`,
-        "Cache-Control": "no-store",
+        "Cache-Control": "no-store, max-age=0",
         "X-Robots-Tag": ROBOTS_TAG,
       });
       res.end();
       return;
     }
+    if (!pathname.startsWith("/api/telemetry")) {
+      console.log(`[preprod-gate] gate-denied 401 ${req.method} ${pathname}`);
+    }
     res.writeHead(401, {
       "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-store",
+      "Cache-Control": "no-store, max-age=0",
+      "X-Preprod-Gate-Auth-Required": "1",
       "X-Robots-Tag": ROBOTS_TAG,
     });
-    res.end(JSON.stringify({ error: "Pre-prod admin authentication required" }));
+    res.end(JSON.stringify({
+      error: "Pre-prod admin authentication required",
+      gate: "preprod",
+      loginUrl: "/_preprod/login",
+    }));
     return;
   }
 
@@ -365,6 +453,17 @@ const server = http.createServer(async (req, res) => {
       const resHeaders = { ...proxyRes.headers };
       resHeaders["x-robots-tag"] = ROBOTS_TAG;
       resHeaders["x-chessalive-env"] = "preprod";
+      const contentType = String(resHeaders["content-type"] || "").toLowerCase();
+      if (contentType.startsWith("text/html")) {
+        // Never allow browser HTTP caches or legacy SWs to store Pre-Prod HTML shells.
+        resHeaders["cache-control"] = "no-store, max-age=0";
+        resHeaders["pragma"] = "no-cache";
+        delete resHeaders["x-chessalive-cache-scope"];
+        delete resHeaders["etag"];
+      }
+      if (pathname.startsWith("/api/auth/")) {
+        console.log(`[preprod-gate] auth ${req.method} ${pathname} -> ${proxyRes.statusCode}`);
+      }
       res.writeHead(proxyRes.statusCode || 200, resHeaders);
       proxyRes.pipe(res);
     }
