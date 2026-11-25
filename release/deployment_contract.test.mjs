@@ -136,11 +136,14 @@ test("source sync fallback preserves image and compression caches while deleting
     const destination = join(scratch, "destination");
     const cache = join(destination, ".cache/squoosh-webp-v1");
     const compressionCache = join(destination, ".cache/web-compression-v1");
+    const routeShellCache = join(destination, ".cache/route-shells-v1");
     mkdirSync(source);
     mkdirSync(cache, { recursive: true });
     mkdirSync(compressionCache, { recursive: true });
+    mkdirSync(routeShellCache, { recursive: true });
     writeFileSync(join(cache, "cached.webp"), "compressed-once");
     writeFileSync(join(compressionCache, "cached.br"), "compressed-once");
+    writeFileSync(join(routeShellCache, "home.json"), "cached-shell");
     writeFileSync(join(destination, "stale-source.js"), "remove me");
     writeFileSync(join(destination, ".cache", "unrelated.tmp"), "remove me");
 
@@ -148,6 +151,7 @@ test("source sync fallback preserves image and compression caches while deleting
     assert.equal(result.status, 0, result.stderr);
     assert.equal(readFileSync(join(cache, "cached.webp"), "utf8"), "compressed-once");
     assert.equal(readFileSync(join(compressionCache, "cached.br"), "utf8"), "compressed-once");
+    assert.equal(readFileSync(join(routeShellCache, "home.json"), "utf8"), "cached-shell");
     assert.equal(existsSync(join(destination, "stale-source.js")), false);
     assert.equal(existsSync(join(destination, ".cache", "unrelated.tmp")), false);
   } finally {

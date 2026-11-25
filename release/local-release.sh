@@ -174,6 +174,7 @@ sync_source_checkout() {
     --exclude apps/player-app/dist/ \
     --exclude '/.cache/squoosh-webp-v1/' \
     --exclude '/.cache/web-compression-v1/' \
+    --exclude '/.cache/route-shells-v1/' \
     --exclude '/.cache/tsconfig.player-app.tsbuildinfo' \
     --exclude '/.cache/eslintcache' \
     --exclude 'apps/go-server/chessd-linux-*' \
